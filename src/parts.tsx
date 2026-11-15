@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Settings } from 'lucide-react'
+import { Repeat, Settings } from 'lucide-react'
 import type { Transaction } from './types'
 import { useStore } from './store'
 import { UNKNOWN_CATEGORY } from './lib'
@@ -68,7 +68,10 @@ export function TxRow({ tx, index }: { tx: Transaction; index?: number }) {
       <IconChip icon={cat.icon} color={cat.color} />
       <span className="min-w-0 flex-1">
         <span className="block truncate font-semibold">{tx.note || cat.name}</span>
-        <span className="block truncate text-sm text-muted">{cat.name}</span>
+        <span className="flex items-center gap-1.5 text-sm text-muted">
+          <span className="truncate">{cat.name}</span>
+          {tx.recurringId && <Repeat size={13} className="shrink-0" aria-label="Récurrente" />}
+        </span>
       </span>
       <span className={cx('num shrink-0 font-semibold', income && 'text-pos')}>
         {money(income ? tx.amount : -tx.amount, true)}

@@ -181,6 +181,7 @@ export function Lock({ onUnlock }: { onUnlock: () => void }) {
                     transactions: [],
                     budgets: [],
                     goals: [],
+                    recurring: [],
                     categories: DEFAULT_CATEGORIES,
                     settings: { id: 'settings', currency: settings.currency },
                   }).then(open)

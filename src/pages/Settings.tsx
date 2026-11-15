@@ -1,6 +1,6 @@
 import { useRef, useState, type ReactNode } from 'react'
 import {
-  ChevronRight, Download, FileSpreadsheet, KeyRound, LockKeyhole, LockKeyholeOpen, Plus, Sparkles, Trash2, Upload,
+  ChevronRight, Download, FileSpreadsheet, KeyRound, LockKeyhole, LockKeyholeOpen, Plus, Repeat, Sparkles, Trash2, Upload,
   type LucideIcon,
 } from 'lucide-react'
 import type { Category, Currency, Data } from '../types'
@@ -8,7 +8,7 @@ import { useStore } from '../store'
 import { download, readBackup, toCSV, todayISO } from '../lib'
 import { Button, ConfirmDelete, Segmented, Sheet, stagger, useToast } from '../ui'
 import { PageHeader } from '../parts'
-import { CategorySheet } from '../forms'
+import { CategorySheet, RecurringSheet } from '../forms'
 import { PinSetupSheet } from '../lock'
 import { iconFor } from '../icons'
 
@@ -47,27 +47,28 @@ function Row({
 
 export function SettingsPage() {
   const store = useStore()
-  const { settings, categories, transactions, budgets, goals, updateSettings } = store
+  const { settings, categories, transactions, budgets, goals, recurring, updateSettings } = store
   const toast = useToast()
   const fileRef = useRef<HTMLInputElement>(null)
   const [catForm, setCatForm] = useState<Category | 'new' | null>(null)
   const [pinSetup, setPinSetup] = useState(false)
+  const [recurringOpen, setRecurringOpen] = useState(false)
   const [pending, setPending] = useState<Data | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const [wipe, setWipe] = useState(false)
 
-  const empty = !transactions.length && !budgets.length && !goals.length
+  const empty = !transactions.length && !budgets.length && !goals.length && !recurring.length
 
   function exportJSON() {
-    store.exportBackup()
-    toast('Sauvegarde exportée')
+    store.exportBackup().then((ok) => ok && toast('Sauvegarde exportée'))
   }
   const lastBackup = settings.lastBackupAt
     ? `Dernière le ${new Date(settings.lastBackupAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}`
     : 'Aucune pour l’instant'
   function exportCSV() {
-    download(`braz-transactions-${todayISO()}.csv`, toCSV(transactions, categories), 'text/csv;charset=utf-8')
-    toast('Transactions exportées')
+    download(`braz-transactions-${todayISO()}.csv`, toCSV(transactions, categories), 'text/csv;charset=utf-8').then(
+      (ok) => ok && toast('Transactions exportées'),
+    )
   }
   async function onFile(file: File | undefined) {
     if (!file) return
@@ -108,7 +109,18 @@ export function SettingsPage() {
           </div>
         </Section>
 
-        <Section title="Catégories" index={2}>
+        <Section title="Récurrences" index={2}>
+          <div className="card overflow-hidden">
+            <Row
+              icon={Repeat}
+              title="Transactions récurrentes"
+              text={recurring.length ? `${recurring.length} active${recurring.length > 1 ? 's' : ''}, ajoutées chaque mois` : 'Salaire, loyer, abonnements…'}
+              onClick={() => setRecurringOpen(true)}
+            />
+          </div>
+        </Section>
+
+        <Section title="Catégories" index={3}>
           <div className="card space-y-5 p-5">
             {(['expense', 'income'] as const).map((type) => (
               <div key={type}>
@@ -137,7 +149,7 @@ export function SettingsPage() {
           </div>
         </Section>
 
-        <Section title="Données" index={3}>
+        <Section title="Données" index={4}>
           <div className="card divide-y divide-line overflow-hidden">
             <Row icon={Download} title="Exporter une sauvegarde" text={lastBackup} onClick={exportJSON} />
             <Row icon={FileSpreadsheet} title="Exporter en CSV" text="Pour Excel ou Google Sheets" onClick={exportCSV} />
@@ -155,6 +167,7 @@ export function SettingsPage() {
 
       {catForm && <CategorySheet category={catForm === 'new' ? null : catForm} onClose={() => setCatForm(null)} />}
       {pinSetup && <PinSetupSheet onClose={() => setPinSetup(false)} />}
+      {recurringOpen && <RecurringSheet onClose={() => setRecurringOpen(false)} />}
 
       {pending && (
         <Sheet

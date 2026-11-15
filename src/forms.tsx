@@ -1,14 +1,53 @@
 import { useState, type FormEvent } from 'react'
-import type { Budget, Category, Goal, Transaction, TxType } from './types'
+import { ArrowLeft, Repeat } from 'lucide-react'
+import type { Budget, Category, Goal, Recurring, Transaction, TxType } from './types'
 import { useStore } from './store'
-import { PALETTE, amountToInput, parseAmount, shiftDay, todayISO, uid } from './lib'
+import { PALETTE, UNKNOWN_CATEGORY, amountToInput, parseAmount, shiftDay, todayISO, uid } from './lib'
 import { GOAL_ICONS, ICON_KEYS, iconFor } from './icons'
-import { AmountInput, Button, ConfirmDelete, Field, IconPicker, Segmented, Sheet, Swatches, cx, useClosing, useToast } from './ui'
+import {
+  AmountInput, Button, ConfirmDelete, Field, IconChip, IconPicker, Segmented, Sheet, Swatches, Switch, cx, useClosing, useToast,
+} from './ui'
 
 const TYPE_OPTIONS: { value: TxType; label: string }[] = [
   { value: 'expense', label: 'Dépense' },
   { value: 'income', label: 'Revenu' },
 ]
+
+/* ---------- Choix de catégorie ---------- */
+
+function CategoryGrid({
+  type, value, onChange, error,
+}: { type: TxType; value: string; onChange: (id: string) => void; error?: string }) {
+  const { categories } = useStore()
+  return (
+    <fieldset>
+      <legend className="mb-2 text-sm font-medium text-muted">Catégorie</legend>
+      <div className="grid grid-cols-3 gap-2 min-[420px]:grid-cols-4">
+        {categories.filter((c) => c.type === type).map((c) => {
+          const Icon = iconFor(c.icon)
+          const on = c.id === value
+          return (
+            <button
+              key={c.id}
+              type="button"
+              aria-pressed={on}
+              onClick={() => onChange(c.id)}
+              className={cx(
+                'flex min-w-0 flex-col items-center gap-1.5 rounded-2xl border-[1.5px] px-1 py-2.5 transition active:scale-95',
+                on ? 'bg-surface' : 'border-transparent bg-surface-2',
+              )}
+              style={on ? { borderColor: c.color } : undefined}
+            >
+              <Icon size={20} style={{ color: c.color }} />
+              <span className={cx('w-full truncate text-center text-xs font-medium', !on && 'text-muted')}>{c.name}</span>
+            </button>
+          )
+        })}
+      </div>
+      {error && <p role="alert" className="mt-1.5 text-sm text-neg">{error}</p>}
+    </fieldset>
+  )
+}
 
 /* ---------- Transaction ---------- */
 
@@ -21,10 +60,10 @@ export function TransactionSheet({ tx, onClose: done }: { tx: Transaction | null
   const [categoryId, setCategoryId] = useState(tx?.categoryId ?? '')
   const [date, setDate] = useState(tx?.date ?? todayISO())
   const [note, setNote] = useState(tx?.note ?? '')
+  const [repeat, setRepeat] = useState(false)
   const [errors, setErrors] = useState<{ amount?: string; category?: string }>({})
 
   const today = todayISO()
-  const cats = categories.filter((c) => c.type === type)
   const noun = type === 'expense' ? 'la dépense' : 'le revenu'
 
   function submit(e: FormEvent) {
@@ -32,19 +71,29 @@ export function TransactionSheet({ tx, onClose: done }: { tx: Transaction | null
     const value = parseAmount(amount)
     const next = {
       amount: value ? undefined : 'Saisissez un montant.',
-      category: cats.some((c) => c.id === categoryId) ? undefined : 'Choisissez une catégorie.',
+      category: categories.some((c) => c.id === categoryId && c.type === type) ? undefined : 'Choisissez une catégorie.',
     }
     setErrors(next)
     if (next.amount || next.category) return
+    const when = date || today
+    const recurringId = repeat ? uid() : tx?.recurringId
     save('transactions', {
       id: tx?.id ?? uid(),
       type,
       amount: value,
       categoryId,
       note: note.trim(),
-      date: date || today,
+      date: when,
       createdAt: tx?.createdAt ?? Date.now(),
+      ...(recurringId ? { recurringId } : {}),
     })
+    if (repeat && recurringId) {
+      // Cette transaction compte pour son mois : la récurrence reprend le mois suivant.
+      const month = when.slice(0, 7)
+      save('recurring', {
+        id: recurringId, type, amount: value, categoryId, note: note.trim(), day: Number(when.slice(8)), startMonth: month, lastRun: month,
+      })
+    }
     toast(tx ? 'Transaction modifiée' : type === 'expense' ? 'Dépense ajoutée' : 'Revenu ajouté')
     onClose()
   }
@@ -92,35 +141,15 @@ export function TransactionSheet({ tx, onClose: done }: { tx: Transaction | null
           }}
         />
 
-        <fieldset>
-          <legend className="mb-2 text-sm font-medium text-muted">Catégorie</legend>
-          <div className="grid grid-cols-3 gap-2 min-[420px]:grid-cols-4">
-            {cats.map((c) => {
-              const Icon = iconFor(c.icon)
-              const on = c.id === categoryId
-              return (
-                <button
-                  key={c.id}
-                  type="button"
-                  aria-pressed={on}
-                  onClick={() => {
-                    setCategoryId(c.id)
-                    setErrors((e) => ({ ...e, category: undefined }))
-                  }}
-                  className={cx(
-                    'flex min-w-0 flex-col items-center gap-1.5 rounded-2xl border-[1.5px] px-1 py-2.5 transition active:scale-95',
-                    on ? 'bg-surface' : 'border-transparent bg-surface-2',
-                  )}
-                  style={on ? { borderColor: c.color } : undefined}
-                >
-                  <Icon size={20} style={{ color: c.color }} />
-                  <span className={cx('w-full truncate text-center text-xs font-medium', !on && 'text-muted')}>{c.name}</span>
-                </button>
-              )
-            })}
-          </div>
-          {errors.category && <p role="alert" className="mt-1.5 text-sm text-neg">{errors.category}</p>}
-        </fieldset>
+        <CategoryGrid
+          type={type}
+          value={categoryId}
+          error={errors.category}
+          onChange={(id) => {
+            setCategoryId(id)
+            setErrors((e) => ({ ...e, category: undefined }))
+          }}
+        />
 
         <div>
           <div className="mb-1.5 flex items-center justify-between">
@@ -152,11 +181,150 @@ export function TransactionSheet({ tx, onClose: done }: { tx: Transaction | null
             className="field"
             value={note}
             maxLength={80}
+            enterKeyHint="done"
             placeholder={type === 'expense' ? 'Ex. Déjeuner, taxi…' : 'Ex. Salaire de novembre'}
             onChange={(e) => setNote(e.target.value)}
           />
         </Field>
+
+        {!tx && <Switch label="Répéter chaque mois" checked={repeat} onChange={setRepeat} />}
+        {tx?.recurringId && (
+          <p className="flex items-center gap-2 text-sm text-muted">
+            <Repeat size={15} /> Créée par une récurrence. La modifier ici ne change que ce mois.
+          </p>
+        )}
       </form>
+    </Sheet>
+  )
+}
+
+/* ---------- Récurrences ---------- */
+
+/** Liste des transactions récurrentes, avec modification et arrêt. */
+export function RecurringSheet({ onClose: done }: { onClose: () => void }) {
+  const [closing, onClose] = useClosing(done)
+  const { recurring, categories, settings, save, remove, money } = useStore()
+  const toast = useToast()
+  const [editing, setEditing] = useState<Recurring | null>(null)
+  const [amount, setAmount] = useState('')
+  const [categoryId, setCategoryId] = useState('')
+  const [day, setDay] = useState('')
+  const [note, setNote] = useState('')
+  const [errors, setErrors] = useState<{ amount?: string; day?: string }>({})
+
+  function edit(r: Recurring) {
+    setEditing(r)
+    setAmount(amountToInput(r.amount, settings.currency))
+    setCategoryId(r.categoryId)
+    setDay(String(r.day))
+    setNote(r.note)
+    setErrors({})
+  }
+
+  function submit(e: FormEvent) {
+    e.preventDefault()
+    if (!editing) return
+    const value = parseAmount(amount)
+    const d = Number(day)
+    const next = {
+      amount: value ? undefined : 'Saisissez un montant.',
+      day: Number.isInteger(d) && d >= 1 && d <= 31 ? undefined : 'Entre 1 et 31.',
+    }
+    setErrors(next)
+    if (next.amount || next.day) return
+    save('recurring', { ...editing, amount: value, categoryId, day: d, note: note.trim() })
+    toast('Récurrence modifiée')
+    setEditing(null)
+  }
+
+  const sorted = [...recurring].sort((a, b) => a.day - b.day)
+
+  return (
+    <Sheet
+      closing={closing}
+      title={editing ? 'Modifier la récurrence' : 'Récurrences'}
+      onClose={onClose}
+      footer={
+        editing ? (
+          <>
+            <ConfirmDelete
+              label="Arrêter"
+              onConfirm={() => {
+                remove('recurring', editing.id)
+                toast('Récurrence arrêtée')
+                setEditing(null)
+              }}
+            />
+            <Button type="submit" form="rec-form" className="flex-1">Enregistrer</Button>
+          </>
+        ) : undefined
+      }
+    >
+      {editing ? (
+        <form id="rec-form" onSubmit={submit} className="space-y-5" noValidate>
+          <button type="button" onClick={() => setEditing(null)} className="-ml-1 inline-flex h-9 items-center gap-1.5 rounded-full px-2 text-sm font-semibold text-primary">
+            <ArrowLeft size={16} /> Toutes les récurrences
+          </button>
+          <AmountInput
+            value={amount}
+            error={errors.amount}
+            onChange={(v) => {
+              setAmount(v)
+              setErrors((x) => ({ ...x, amount: undefined }))
+            }}
+          />
+          <CategoryGrid type={editing.type} value={categoryId} onChange={setCategoryId} />
+          <Field label="Jour du mois" error={errors.day}>
+            <input
+              className="field"
+              inputMode="numeric"
+              enterKeyHint="done"
+              maxLength={2}
+              value={day}
+              onChange={(e) => {
+                setDay(e.target.value.replace(/\D/g, ''))
+                setErrors((x) => ({ ...x, day: undefined }))
+              }}
+            />
+          </Field>
+          <Field label="Note (facultatif)">
+            <input className="field" value={note} maxLength={80} enterKeyHint="done" onChange={(e) => setNote(e.target.value)} />
+          </Field>
+          <p className="text-sm text-muted">Les changements s’appliquent aux prochains mois.</p>
+        </form>
+      ) : sorted.length ? (
+        <div className="-mx-2 pb-2">
+          {sorted.map((r) => {
+            const cat = categories.find((c) => c.id === r.categoryId) ?? UNKNOWN_CATEGORY
+            const income = r.type === 'income'
+            return (
+              <button
+                key={r.id}
+                type="button"
+                onClick={() => edit(r)}
+                className="flex w-full items-center gap-3 rounded-2xl px-2 py-3 text-left transition hover:bg-surface-2/60 active:bg-surface-2"
+              >
+                <IconChip icon={cat.icon} color={cat.color} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-semibold">{r.note || cat.name}</span>
+                  <span className="block truncate text-sm text-muted">Le {r.day} de chaque mois</span>
+                </span>
+                <span className={cx('num shrink-0 font-semibold', income && 'text-pos')}>{money(income ? r.amount : -r.amount, true)}</span>
+              </button>
+            )
+          })}
+        </div>
+      ) : (
+        <div className="flex flex-col items-center px-4 pb-8 pt-4 text-center">
+          <span className="mb-4 grid size-16 place-items-center rounded-3xl bg-primary-soft text-primary">
+            <Repeat size={26} />
+          </span>
+          <p className="display text-lg font-semibold">Aucune récurrence</p>
+          <p className="mt-1 max-w-xs text-[15px] text-muted">
+            Activez « Répéter chaque mois » en ajoutant une transaction.
+          </p>
+        </div>
+      )}
     </Sheet>
   )
 }

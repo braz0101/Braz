@@ -2,8 +2,8 @@
 import type { Data } from './types'
 
 const NAME = 'braz'
-const VERSION = 1
-export const LISTS = ['transactions', 'categories', 'budgets', 'goals'] as const
+const VERSION = 2
+export const LISTS = ['transactions', 'categories', 'budgets', 'goals', 'recurring'] as const
 export type ListName = (typeof LISTS)[number]
 type StoreName = ListName | 'meta'
 
@@ -42,14 +42,15 @@ function all<T>(db: IDBDatabase, store: StoreName): Promise<T[]> {
 
 export async function loadAll(): Promise<Partial<Data>> {
   const db = await open()
-  const [transactions, categories, budgets, goals, meta] = await Promise.all([
+  const [transactions, categories, budgets, goals, recurring, meta] = await Promise.all([
     all<Data['transactions'][number]>(db, 'transactions'),
     all<Data['categories'][number]>(db, 'categories'),
     all<Data['budgets'][number]>(db, 'budgets'),
     all<Data['goals'][number]>(db, 'goals'),
+    all<Data['recurring'][number]>(db, 'recurring'),
     all<Data['settings']>(db, 'meta'),
   ])
-  return { transactions, categories, budgets, goals, settings: meta.find((m) => m.id === 'settings') }
+  return { transactions, categories, budgets, goals, recurring, settings: meta.find((m) => m.id === 'settings') }
 }
 
 export async function put(store: StoreName, value: unknown): Promise<void> {

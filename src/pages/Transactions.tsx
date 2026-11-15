@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react'
-import { Plus, ReceiptText, Search, SearchX } from 'lucide-react'
+import { Plus, ReceiptText, Repeat, Search, SearchX } from 'lucide-react'
 import type { Transaction } from '../types'
 import { useStore } from '../store'
 import { dayLabel, inMonth, sortTx, sum } from '../lib'
 import { iconFor } from '../icons'
 import { Button, Empty, MonthSwitcher, Segmented, cx, stagger } from '../ui'
 import { PageHeader, TxRow } from '../parts'
+import { RecurringSheet } from '../forms'
 
 type Filter = 'all' | 'expense' | 'income'
 const FILTERS: { value: Filter; label: string }[] = [
@@ -15,7 +16,8 @@ const FILTERS: { value: Filter; label: string }[] = [
 ]
 
 export function Transactions() {
-  const { transactions, categories, month, money, setTxForm } = useStore()
+  const { transactions, categories, recurring, month, money, setTxForm } = useStore()
+  const [recurringOpen, setRecurringOpen] = useState(false)
   const [filter, setFilter] = useState<Filter>('all')
   const [categoryId, setCategoryId] = useState('')
   const [query, setQuery] = useState('')
@@ -103,6 +105,17 @@ export function Transactions() {
           })}
         </div>
       )}
+
+      {recurring.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setRecurringOpen(true)}
+          className="mt-3 inline-flex h-9 items-center gap-1.5 rounded-full bg-primary-soft px-3.5 text-sm font-semibold text-primary transition active:scale-95"
+        >
+          <Repeat size={15} /> {recurring.length} récurrente{recurring.length > 1 ? 's' : ''}
+        </button>
+      )}
+      {recurringOpen && <RecurringSheet onClose={() => setRecurringOpen(false)} />}
 
       {filtered.length > 0 && (
         <p className="mt-5 flex flex-wrap gap-x-5 gap-y-1 px-1 text-sm text-muted">

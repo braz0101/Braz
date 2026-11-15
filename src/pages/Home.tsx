@@ -104,8 +104,7 @@ export function Home() {
           <Button
             className="h-10 shrink-0 px-4"
             onClick={() => {
-              exportBackup()
-              toast('Sauvegarde exportée')
+              exportBackup().then((ok) => ok && toast('Sauvegarde exportée'))
             }}
           >
             Exporter

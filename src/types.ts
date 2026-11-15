@@ -10,6 +10,23 @@ export interface Transaction {
   /** Date locale au format AAAA-MM-JJ */
   date: string
   createdAt: number
+  /** Renseigné quand la transaction provient d'une récurrence */
+  recurringId?: string
+}
+
+/** Transaction répétée chaque mois (salaire, loyer, abonnement…) */
+export interface Recurring {
+  id: string
+  type: TxType
+  amount: number
+  categoryId: string
+  note: string
+  /** Jour du mois, de 1 à 31 ; ramené au dernier jour pour les mois plus courts */
+  day: number
+  /** Premier mois concerné, au format AAAA-MM */
+  startMonth: string
+  /** Dernier mois pour lequel la transaction a été créée */
+  lastRun?: string
 }
 
 export interface Category {
@@ -54,6 +71,7 @@ export interface Data {
   categories: Category[]
   budgets: Budget[]
   goals: Goal[]
+  recurring: Recurring[]
   settings: Settings
 }
 

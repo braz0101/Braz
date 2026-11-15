@@ -1,4 +1,4 @@
-import type { Backup, Category, Currency, Data, Goal, Transaction, Budget } from './types'
+import type { Backup, Category, Currency, Data, Goal, Recurring, Transaction, Budget } from './types'
 
 export const uid = () => crypto.randomUUID()
 
@@ -130,6 +130,42 @@ export function spentByCategory(txs: Transaction[]): Map<string, number> {
   return map
 }
 
+/* ---------- Récurrences ---------- */
+
+export const recurringDate = (month: string, day: number) => `${month}-${pad(Math.min(day, daysInMonth(month)))}`
+
+/**
+ * Transactions à créer pour les récurrences arrivées à échéance, et récurrences mises à jour.
+ * L'identifiant de chaque transaction est déterministe : rejouer le calcul ne crée pas de doublon.
+ */
+export function dueRecurring(recurring: Recurring[], today: string): { transactions: Transaction[]; recurring: Recurring[] } {
+  const transactions: Transaction[] = []
+  const updated: Recurring[] = []
+  const thisMonth = today.slice(0, 7)
+  for (const r of recurring) {
+    let month = r.lastRun ? shiftMonth(r.lastRun, 1) : r.startMonth
+    let last = r.lastRun
+    for (let guard = 0; month <= thisMonth && guard < 60; guard++) {
+      const date = recurringDate(month, r.day)
+      if (date > today) break
+      transactions.push({
+        id: `${r.id}-${month}`,
+        type: r.type,
+        amount: r.amount,
+        categoryId: r.categoryId,
+        note: r.note,
+        date,
+        createdAt: Date.now(),
+        recurringId: r.id,
+      })
+      last = month
+      month = shiftMonth(month, 1)
+    }
+    if (last !== r.lastRun) updated.push({ ...r, lastRun: last })
+  }
+  return { transactions, recurring: updated }
+}
+
 /* ---------- Code d'accès ---------- */
 
 /** Empreinte salée du code. Verrou d'écran local : les données ne sont pas chiffrées. */
@@ -147,7 +183,23 @@ export async function hashPin(pin: string, salt: string): Promise<string> {
 
 /* ---------- Sauvegarde ---------- */
 
-export function download(filename: string, content: string, type: string) {
+const isIOS = () =>
+  /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+
+/** Enregistre un fichier. Renvoie false si l'utilisateur a annulé. */
+export async function download(filename: string, content: string, type: string): Promise<boolean> {
+  // Sur iPhone, une application installée ne sait pas télécharger un lien : on passe par la feuille de partage.
+  if (isIOS() && typeof navigator.share === 'function') {
+    const file = new File([content], filename, { type })
+    if (navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file] })
+        return true
+      } catch {
+        return false
+      }
+    }
+  }
   const url = URL.createObjectURL(new Blob([content], { type }))
   const a = document.createElement('a')
   a.href = url
@@ -156,6 +208,7 @@ export function download(filename: string, content: string, type: string) {
   a.click()
   a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
+  return true
 }
 
 export function toBackup(data: Data): Backup {
@@ -184,6 +237,7 @@ export function readBackup(text: string): Data {
     categories: raw.categories,
     budgets: Array.isArray(raw.budgets) ? raw.budgets : [],
     goals: Array.isArray(raw.goals) ? raw.goals : [],
+    recurring: Array.isArray(raw.recurring) ? raw.recurring : [],
     settings: { id: 'settings', currency: raw.settings?.currency ?? 'FCFA' },
   }
 }
@@ -199,7 +253,7 @@ export function toCSV(txs: Transaction[], categories: Category[]): string {
 
 /* ---------- Données d'exemple ---------- */
 
-export function demoData(): Pick<Data, 'transactions' | 'budgets' | 'goals'> {
+export function demoData(): Pick<Data, 'transactions' | 'budgets' | 'goals' | 'recurring'> {
   let seed = 42
   const rnd = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646
   const between = (a: number, b: number, step = 500) => Math.round((a + rnd() * (b - a)) / step) * step
@@ -238,5 +292,16 @@ export function demoData(): Pick<Data, 'transactions' | 'budgets' | 'goals'> {
     { id: uid(), name: 'Ordinateur portable', target: 450000, saved: 180000, icon: 'laptop', color: '#4B4EE6', createdAt: Date.now() - 2 },
     { id: uid(), name: 'Fonds d’urgence', target: 300000, saved: 95000, icon: 'piggy', color: '#0E9F6E', createdAt: Date.now() - 1 },
   ]
-  return { transactions: txs, budgets, goals }
+  // Les exemples mensuels ci-dessus existent déjà : la récurrence reprend au mois suivant.
+  const rec = (categoryId: string, type: Transaction['type'], amount: number, note: string, day: number): Recurring => {
+    const month = currentMonth()
+    const done = recurringDate(month, day) <= today
+    return { id: uid(), type, amount, categoryId, note, day, startMonth: month, lastRun: done ? month : shiftMonth(month, -1) }
+  }
+  const recurring = [
+    rec('salaire', 'income', 350000, 'Salaire', 1),
+    rec('logement', 'expense', 90000, 'Loyer', 2),
+    rec('communication', 'expense', 10000, 'Forfait internet', 6),
+  ]
+  return { transactions: txs, budgets, goals, recurring }
 }

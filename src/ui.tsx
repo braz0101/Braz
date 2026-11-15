@@ -2,7 +2,7 @@ import {
   createContext, useCallback, useContext, useEffect, useRef, useState,
   type ButtonHTMLAttributes, type CSSProperties, type ReactNode,
 } from 'react'
-import { Check, ChevronLeft, ChevronRight, X, type LucideIcon } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, Delete, X, type LucideIcon } from 'lucide-react'
 import { iconFor } from './icons'
 import { currentMonth, formatAmountInput, monthLabel, shiftMonth, currencySymbol } from './lib'
 import { useStore } from './store'
@@ -147,15 +147,16 @@ export function Sheet({
     const d = ref.current
     if (d && !d.open) {
       d.showModal()
-      // showModal place le focus sur le premier bouton : on le ramène sur le champ principal.
-      d.querySelector<HTMLElement>('[data-autofocus]')?.focus()
+      // showModal place le focus sur le bouton de fermeture : on le ramène sur le champ principal, sinon sur la feuille.
+      ;(d.querySelector<HTMLElement>('[data-autofocus]') ?? d).focus()
     }
     return () => d?.close()
   }, [])
   return (
     <dialog
       ref={ref}
-      className={cx('sheet', (closing || selfClosing) && 'closing')}
+      tabIndex={-1}
+      className={cx('sheet outline-none', (closing || selfClosing) && 'closing')}
       aria-label={title}
       onCancel={(e) => {
         e.preventDefault()
@@ -228,34 +229,113 @@ export function Segmented<T extends string>({
   )
 }
 
-/** Grand champ de montant, formaté pendant la saisie. */
+const coarsePointer = () => matchMedia('(pointer: coarse)').matches
+const amountBox = 'block w-full rounded-3xl bg-surface-2 px-5 py-4 text-center transition-shadow'
+
+/**
+ * Grand champ de montant, formaté pendant la saisie.
+ * Sur écran tactile, il utilise son propre pavé numérique : le clavier du téléphone ne s'ouvre pas.
+ */
 export function AmountInput({
   value, onChange, autoFocus, label = 'Montant', error,
 }: { value: string; onChange: (v: string) => void; autoFocus?: boolean; label?: string; error?: string }) {
   const { settings } = useStore()
+  const [touch] = useState(coarsePointer)
+  const [open, setOpen] = useState(!!autoFocus)
+  const box = useRef<HTMLDivElement>(null)
+  const symbol = currencySymbol(settings.currency)
+  const set = (raw: string) => onChange(formatAmountInput(raw, settings.currency))
+  const whole = symbol === 'FCFA' || symbol === 'XOF'
+
+  // Le pavé se referme quand on touche autre chose. On écoute le clic (et non l'appui)
+  // pour que l'élément visé reçoive son clic avant que la mise en page ne bouge.
+  useEffect(() => {
+    if (!touch || !open) return
+    const away = (e: Event) => {
+      if (!box.current?.contains(e.target as Node)) setOpen(false)
+    }
+    // On n'écoute que la feuille : le clic qui vient de l'ouvrir, parti d'ailleurs, ne doit pas refermer le pavé.
+    const scope: Node = box.current?.closest('dialog') ?? document
+    scope.addEventListener('click', away)
+    return () => {
+      scope.removeEventListener('click', away)
+    }
+  }, [touch, open])
+
+  if (!touch) {
+    return (
+      <label className={cx(amountBox, 'focus-within:ring-2 focus-within:ring-primary', error && 'shake ring-2 ring-neg/60')}>
+        <span className="block text-sm font-medium text-muted">{label}</span>
+        <span className="mt-1 flex items-baseline justify-center gap-2">
+          <input
+            inputMode="decimal"
+            autoComplete="off"
+            data-autofocus={autoFocus || undefined}
+            placeholder="0"
+            value={value}
+            onChange={(e) => set(e.target.value)}
+            className="display num w-full min-w-0 bg-transparent text-center text-[2.6rem] font-semibold leading-tight outline-none placeholder:text-muted/40"
+            style={{ maxWidth: `${Math.max(2, value.length + 1)}ch` }}
+          />
+          <span className="shrink-0 text-lg font-semibold text-muted">{symbol}</span>
+        </span>
+        {error && <span role="alert" className="mt-1 block text-sm text-neg">{error}</span>}
+      </label>
+    )
+  }
+
+  const key = 'display grid h-12 place-items-center rounded-2xl bg-surface-2 text-xl font-semibold transition duration-100 active:scale-95 active:bg-primary-soft'
   return (
-    <label
-      className={cx(
-        'block rounded-3xl bg-surface-2 px-5 py-4 text-center transition-shadow focus-within:ring-2 focus-within:ring-primary',
-        error && 'shake ring-2 ring-neg/60',
+    <div ref={box}>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-label={`${label} : ${value || '0'} ${symbol}`}
+        aria-expanded={open}
+        className={cx(amountBox, open && 'ring-2 ring-primary', error && 'shake ring-2 ring-neg/60')}
+      >
+        <span className="block text-sm font-medium text-muted">{label}</span>
+        <span className="mt-1 flex items-baseline justify-center gap-1.5">
+          <span className={cx('display num text-[2.6rem] font-semibold leading-tight', !value && 'text-muted/40')}>{value || '0'}</span>
+          {open && <span className="caret" aria-hidden />}
+          <span className="ml-1 text-lg font-semibold text-muted">{symbol}</span>
+        </span>
+        {error && <span role="alert" className="mt-1 block text-sm text-neg">{error}</span>}
+      </button>
+      {open && (
+        <div className="mt-3 grid animate-[rise_0.25s_var(--ease-soft)] grid-cols-3 gap-2" role="group" aria-label="Pavé numérique">
+          {['1', '2', '3', '4', '5', '6', '7', '8', '9', whole ? '00' : ',', '0'].map((d) => (
+            <button key={d} type="button" className={key} onClick={() => set(value + d)}>{d}</button>
+          ))}
+          <button type="button" aria-label="Effacer" className={cx(key, 'text-muted')} onClick={() => set(value.slice(0, -1))}>
+            <Delete size={22} />
+          </button>
+        </div>
       )}
+    </div>
+  )
+}
+
+/** Interrupteur accessible. */
+export function Switch({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className="flex min-h-12 w-full items-center justify-between gap-4 rounded-2xl bg-surface-2 px-4 text-left font-medium"
     >
-      <span className="block text-sm font-medium text-muted">{label}</span>
-      <span className="mt-1 flex items-baseline justify-center gap-2">
-        <input
-          inputMode="decimal"
-          autoComplete="off"
-          data-autofocus={autoFocus || undefined}
-          placeholder="0"
-          value={value}
-          onChange={(e) => onChange(formatAmountInput(e.target.value, settings.currency))}
-          className="display num w-full min-w-0 bg-transparent text-center text-[2.6rem] font-semibold leading-tight outline-none placeholder:text-muted/40"
-          style={{ maxWidth: `${Math.max(2, value.length + 1)}ch` }}
+      {label}
+      <span className={cx('relative h-7 w-12 shrink-0 rounded-full transition-colors duration-200', checked ? 'bg-primary' : 'bg-ink/15')}>
+        <span
+          className={cx(
+            'absolute left-0.5 top-0.5 size-6 rounded-full bg-white shadow transition-transform duration-200 ease-soft',
+            checked && 'translate-x-5',
+          )}
         />
-        <span className="shrink-0 text-lg font-semibold text-muted">{currencySymbol(settings.currency)}</span>
       </span>
-      {error && <span role="alert" className="mt-1 block text-sm text-neg">{error}</span>}
-    </label>
+    </button>
   )
 }
 

@@ -18,6 +18,7 @@
 |---|---|
 | **Tableau de bord** | Solde disponible, revenus et dépenses du mois, courbe d'évolution, dernières transactions. |
 | **Transactions** | Ajout en quelques secondes, modification, suppression, recherche, filtres par type et par catégorie. |
+| **Récurrences** | Salaire, loyer, abonnements : cochez « Répéter chaque mois » et la transaction s'ajoute seule chaque mois. |
 | **Catégories** | Quinze catégories prêtes à l'emploi, personnalisables (nom, icône, couleur). |
 | **Budgets** | Une limite mensuelle par catégorie, avec le reste à dépenser et le montant disponible par jour. |
 | **Épargne** | Des objectifs avec versements, retraits et progression. L'argent mis de côté est déduit du solde disponible. |

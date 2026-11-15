@@ -1,9 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import * as db from './db'
-import type { Budget, Category, Data, Goal, Settings, Transaction } from './types'
-import { DEFAULT_CATEGORIES, currentMonth, demoData, download, formatMoney, toBackup, todayISO } from './lib'
+import type { Budget, Category, Data, Goal, Recurring, Settings, Transaction } from './types'
+import { DEFAULT_CATEGORIES, currentMonth, demoData, download, dueRecurring, formatMoney, toBackup, todayISO } from './lib'
 
-type Lists = { transactions: Transaction; categories: Category; budgets: Budget; goals: Goal }
+type Lists = { transactions: Transaction; categories: Category; budgets: Budget; goals: Goal; recurring: Recurring }
 const DEFAULT_SETTINGS: Settings = { id: 'settings', currency: 'FCFA' }
 
 interface Store extends Data {
@@ -14,8 +14,8 @@ interface Store extends Data {
   updateSettings: (patch: Partial<Settings>) => void
   replaceAll: (data: Data) => Promise<void>
   clearAll: () => Promise<void>
-  /** Télécharge une sauvegarde JSON et note la date de l'export. */
-  exportBackup: () => void
+  /** Enregistre une sauvegarde JSON et note la date de l'export. Renvoie false si l'export a été annulé. */
+  exportBackup: () => Promise<boolean>
   loadDemo: () => Promise<void>
   /** Formulaire de transaction ouvert : une transaction à modifier, 'new', ou null */
   txForm: Transaction | 'new' | null
@@ -48,6 +48,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             transactions: d.transactions ?? [],
             budgets: d.budgets ?? [],
             goals: d.goals ?? [],
+            recurring: d.recurring ?? [],
             categories,
             settings,
           })
@@ -56,6 +57,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           transactions: d.transactions ?? [],
           budgets: d.budgets ?? [],
           goals: d.goals ?? [],
+          recurring: d.recurring ?? [],
           categories,
           settings,
         })
@@ -94,6 +96,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setData(next)
   }, [])
 
+  // Crée les transactions récurrentes arrivées à échéance : au chargement, et au retour dans l'application un autre jour.
+  const [today, setToday] = useState(todayISO)
+  useEffect(() => {
+    const onVisible = () => !document.hidden && setToday(todayISO())
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [])
+  const recurring = data?.recurring
+  useEffect(() => {
+    if (!recurring) return
+    const due = dueRecurring(recurring, today)
+    due.transactions.forEach((t) => save('transactions', t))
+    due.recurring.forEach((r) => save('recurring', r))
+  }, [recurring, today, save])
+
   const value = useMemo<Store | null>(() => {
     if (!data) return null
     // Catégories d'origine dans leur ordre naturel, puis les catégories personnalisées par nom.
@@ -112,10 +129,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       updateSettings,
       replaceAll,
       clearAll: () =>
-        replaceAll({ transactions: [], budgets: [], goals: [], categories: DEFAULT_CATEGORIES, settings: data.settings }),
-      exportBackup: () => {
-        download(`braz-sauvegarde-${todayISO()}.json`, JSON.stringify(toBackup(data), null, 2), 'application/json')
-        updateSettings({ lastBackupAt: Date.now(), backupSnoozeUntil: undefined })
+        replaceAll({ transactions: [], budgets: [], goals: [], recurring: [], categories: DEFAULT_CATEGORIES, settings: data.settings }),
+      exportBackup: async () => {
+        const ok = await download(`braz-sauvegarde-${todayISO()}.json`, JSON.stringify(toBackup(data), null, 2), 'application/json')
+        if (ok) updateSettings({ lastBackupAt: Date.now(), backupSnoozeUntil: undefined })
+        return ok
       },
       loadDemo: () => {
         const demo = demoData()
