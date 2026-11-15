@@ -43,6 +43,10 @@ export interface Settings {
   currency: Currency
   /** Code d'accès : seule son empreinte salée est conservée. */
   pin?: { salt: string; hash: string }
+  /** Date du dernier export de sauvegarde sur cet appareil */
+  lastBackupAt?: number
+  /** Le rappel de sauvegarde est masqué jusqu'à cette date */
+  backupSnoozeUntil?: number
 }
 
 export interface Data {

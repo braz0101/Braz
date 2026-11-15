@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import * as db from './db'
 import type { Budget, Category, Data, Goal, Settings, Transaction } from './types'
-import { DEFAULT_CATEGORIES, currentMonth, demoData, formatMoney } from './lib'
+import { DEFAULT_CATEGORIES, currentMonth, demoData, download, formatMoney, toBackup, todayISO } from './lib'
 
 type Lists = { transactions: Transaction; categories: Category; budgets: Budget; goals: Goal }
 const DEFAULT_SETTINGS: Settings = { id: 'settings', currency: 'FCFA' }
@@ -14,6 +14,8 @@ interface Store extends Data {
   updateSettings: (patch: Partial<Settings>) => void
   replaceAll: (data: Data) => Promise<void>
   clearAll: () => Promise<void>
+  /** Télécharge une sauvegarde JSON et note la date de l'export. */
+  exportBackup: () => void
   loadDemo: () => Promise<void>
   /** Formulaire de transaction ouvert : une transaction à modifier, 'new', ou null */
   txForm: Transaction | 'new' | null
@@ -38,7 +40,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     db.loadAll()
       .then(async (d) => {
-        const settings: Settings = { id: 'settings', currency: d.settings?.currency ?? DEFAULT_SETTINGS.currency, pin: d.settings?.pin }
+        const settings: Settings = { ...DEFAULT_SETTINGS, ...d.settings, id: 'settings' }
         let categories = d.categories ?? []
         if (!categories.length) {
           categories = DEFAULT_CATEGORIES
@@ -111,6 +113,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       replaceAll,
       clearAll: () =>
         replaceAll({ transactions: [], budgets: [], goals: [], categories: DEFAULT_CATEGORIES, settings: data.settings }),
+      exportBackup: () => {
+        download(`braz-sauvegarde-${todayISO()}.json`, JSON.stringify(toBackup(data), null, 2), 'application/json')
+        updateSettings({ lastBackupAt: Date.now(), backupSnoozeUntil: undefined })
+      },
       loadDemo: () => {
         const demo = demoData()
         // Les exemples s'appuient sur les catégories par défaut : on les rétablit si elles ont été supprimées.

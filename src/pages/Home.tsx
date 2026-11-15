@@ -1,5 +1,5 @@
-import { useMemo } from 'react'
-import { ArrowDownLeft, ArrowUpRight, PiggyBank, Wallet } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { ArrowDownLeft, ArrowUpRight, PiggyBank, ShieldCheck, Wallet, X } from 'lucide-react'
 import { useStore } from '../store'
 import { currentMonth, daysInMonth, inMonth, sortTx, spentByCategory, sum, todayISO } from '../lib'
 import { Button, Empty, IconChip, Money, MonthSwitcher, Progress, stagger, useToast } from '../ui'
@@ -7,7 +7,7 @@ import { Logo, PageHeader, SectionHead, TxRow } from '../parts'
 import { Sparkline } from '../charts'
 
 export function Home() {
-  const { transactions, goals, budgets, categories, month, money, setTxForm, loadDemo } = useStore()
+  const { transactions, goals, budgets, categories, month, money, setTxForm, loadDemo, settings, updateSettings, exportBackup } = useStore()
   const toast = useToast()
 
   const totalSaved = goals.reduce((s, g) => s + g.saved, 0)
@@ -38,6 +38,13 @@ export function Home() {
     .filter((x) => x.cat)
     .sort((a, z) => z.used / z.b.limit - a.used / a.b.limit)
     .slice(0, 3)
+
+  // Rappel de sauvegarde : dès qu'il y a des données, tous les 30 jours, reportable d'une semaine.
+  const [now] = useState(() => Date.now())
+  const DAY = 86_400_000
+  const backupAge = settings.lastBackupAt ? Math.floor((now - settings.lastBackupAt) / DAY) : null
+  const remind =
+    transactions.length >= 5 && now > (settings.backupSnoozeUntil ?? 0) && (backupAge === null || backupAge >= 30)
 
   const hour = new Date().getHours()
   const firstRun = transactions.length === 0 && goals.length === 0 && budgets.length === 0
@@ -84,6 +91,35 @@ export function Home() {
           </div>
         </dl>
       </section>
+
+      {remind && (
+        <div className="card rise mt-4 flex items-center gap-3 py-3 pl-4 pr-2" style={stagger(1)}>
+          <ShieldCheck size={22} className="hidden shrink-0 text-primary min-[380px]:block" />
+          <p className="min-w-0 flex-1 text-[15px] font-semibold leading-tight">
+            Sauvegardez vos données
+            <span className="block truncate text-sm font-normal text-muted">
+              {backupAge === null ? 'Aucune sauvegarde pour l’instant' : `Dernière il y a ${backupAge} jours`}
+            </span>
+          </p>
+          <Button
+            className="h-10 shrink-0 px-4"
+            onClick={() => {
+              exportBackup()
+              toast('Sauvegarde exportée')
+            }}
+          >
+            Exporter
+          </Button>
+          <button
+            type="button"
+            aria-label="Me le rappeler plus tard"
+            onClick={() => updateSettings({ backupSnoozeUntil: Date.now() + 7 * DAY })}
+            className="grid size-10 shrink-0 place-items-center rounded-full text-muted transition hover:bg-surface-2 active:scale-90"
+          >
+            <X size={18} />
+          </button>
+        </div>
+      )}
 
       {firstRun ? (
         <div className="card rise mt-6" style={stagger(2)}>

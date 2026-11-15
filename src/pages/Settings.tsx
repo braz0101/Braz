@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import type { Category, Currency, Data } from '../types'
 import { useStore } from '../store'
-import { download, readBackup, toBackup, toCSV, todayISO } from '../lib'
+import { download, readBackup, toCSV, todayISO } from '../lib'
 import { Button, ConfirmDelete, Segmented, Sheet, stagger, useToast } from '../ui'
 import { PageHeader } from '../parts'
 import { CategorySheet } from '../forms'
@@ -59,10 +59,12 @@ export function SettingsPage() {
   const empty = !transactions.length && !budgets.length && !goals.length
 
   function exportJSON() {
-    const data: Data = { transactions, categories, budgets, goals, settings }
-    download(`braz-sauvegarde-${todayISO()}.json`, JSON.stringify(toBackup(data), null, 2), 'application/json')
+    store.exportBackup()
     toast('Sauvegarde exportée')
   }
+  const lastBackup = settings.lastBackupAt
+    ? `Dernière le ${new Date(settings.lastBackupAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}`
+    : 'Aucune pour l’instant'
   function exportCSV() {
     download(`braz-transactions-${todayISO()}.csv`, toCSV(transactions, categories), 'text/csv;charset=utf-8')
     toast('Transactions exportées')
@@ -137,7 +139,7 @@ export function SettingsPage() {
 
         <Section title="Données" index={3}>
           <div className="card divide-y divide-line overflow-hidden">
-            <Row icon={Download} title="Exporter une sauvegarde" text="Fichier JSON complet" onClick={exportJSON} />
+            <Row icon={Download} title="Exporter une sauvegarde" text={lastBackup} onClick={exportJSON} />
             <Row icon={FileSpreadsheet} title="Exporter en CSV" text="Pour Excel ou Google Sheets" onClick={exportCSV} />
             <Row icon={Upload} title="Restaurer une sauvegarde" onClick={() => fileRef.current?.click()} />
             {empty ? (
@@ -165,8 +167,8 @@ export function SettingsPage() {
                 className="flex-1"
                 onClick={() =>
                   store
-                    // Le code d'accès appartient à l'appareil : la restauration ne le modifie pas.
-                    .replaceAll({ ...pending, settings: { ...pending.settings, pin: settings.pin } })
+                    // Code d'accès et suivi des sauvegardes appartiennent à l'appareil : seule la devise est restaurée.
+                    .replaceAll({ ...pending, settings: { ...settings, currency: pending.settings.currency } })
                     .then(() => toast('Sauvegarde restaurée'))
                     .catch(() => setProblem('La restauration a échoué. Vos données actuelles sont intactes.'))
                     .finally(() => setPending(null))
