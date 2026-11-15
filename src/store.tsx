@@ -1,9 +1,21 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import * as db from './db'
-import type { Budget, Category, Data, Goal, Recurring, Settings, Transaction } from './types'
-import { DEFAULT_CATEGORIES, currentMonth, demoData, download, dueRecurring, formatMoney, toBackup, todayISO } from './lib'
+import type { Account, Budget, Category, Currency, Data, Goal, Recurring, SavingsMove, Settings, Transaction, Transfer } from './types'
+import {
+  DEFAULT_ACCOUNTS, DEFAULT_CATEGORIES, accountBalances, budgetAlerts, convertData, currentMonth, demoData, download, dueRecurring, emptyData,
+  formatMoney, normalize, toBackup, todayISO,
+} from './lib'
 
-type Lists = { transactions: Transaction; categories: Category; budgets: Budget; goals: Goal; recurring: Recurring }
+type Lists = {
+  transactions: Transaction
+  categories: Category
+  budgets: Budget
+  goals: Goal
+  recurring: Recurring
+  accounts: Account
+  transfers: Transfer
+  moves: SavingsMove
+}
 const DEFAULT_SETTINGS: Settings = { id: 'settings', currency: 'FCFA' }
 
 interface Store extends Data {
@@ -17,9 +29,19 @@ interface Store extends Data {
   /** Enregistre une sauvegarde JSON et note la date de l'export. Renvoie false si l'export a été annulé. */
   exportBackup: () => Promise<boolean>
   loadDemo: () => Promise<void>
+  /** Change de devise ; avec un taux, tous les montants sont convertis. */
+  changeCurrency: (currency: Currency, factor?: number) => Promise<void>
+  /** Solde de chaque compte */
+  balances: Map<string, number>
+  /** Argent disponible, tous comptes confondus */
+  total: number
+  /** Budgets du mois en cours proches de leur limite ou dépassés */
+  alerts: ReturnType<typeof budgetAlerts>
   /** Formulaire de transaction ouvert : une transaction à modifier, 'new', ou null */
   txForm: Transaction | 'new' | null
   setTxForm: (v: Transaction | 'new' | null) => void
+  transferForm: Transfer | 'new' | null
+  setTransferForm: (v: Transfer | 'new' | null) => void
   money: (n: number, sign?: boolean) => string
 }
 
@@ -36,31 +58,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null)
   const [month, setMonth] = useState(currentMonth)
   const [txForm, setTxForm] = useState<Store['txForm']>(null)
+  const [transferForm, setTransferForm] = useState<Store['transferForm']>(null)
 
   useEffect(() => {
     db.loadAll()
       .then(async (d) => {
-        const settings: Settings = { ...DEFAULT_SETTINGS, ...d.settings, id: 'settings' }
-        let categories = d.categories ?? []
-        if (!categories.length) {
-          categories = DEFAULT_CATEGORIES
-          await db.replaceAll({
-            transactions: d.transactions ?? [],
-            budgets: d.budgets ?? [],
-            goals: d.goals ?? [],
-            recurring: d.recurring ?? [],
-            categories,
-            settings,
-          })
-        }
-        setData({
+        const stored: Data = {
           transactions: d.transactions ?? [],
+          categories: d.categories ?? [],
           budgets: d.budgets ?? [],
           goals: d.goals ?? [],
           recurring: d.recurring ?? [],
-          categories,
-          settings,
-        })
+          accounts: d.accounts ?? [],
+          transfers: d.transfers ?? [],
+          moves: d.moves ?? [],
+          settings: { ...DEFAULT_SETTINGS, ...d.settings, id: 'settings' },
+        }
+        // Première ouverture ou données d'une version précédente : mise au format courant, une fois.
+        const next = normalize({ ...stored, categories: stored.categories.length ? stored.categories : DEFAULT_CATEGORIES })
+        if (JSON.stringify(next) !== JSON.stringify(stored)) await db.replaceAll(next)
+        setData(next)
         // Demande au navigateur de ne pas purger les données locales.
         navigator.storage?.persist?.().catch(() => {})
       })
@@ -91,7 +108,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  const replaceAll = useCallback(async (next: Data) => {
+  const replaceAll = useCallback(async (incoming: Data) => {
+    const next = normalize(incoming)
     await db.replaceAll(next)
     setData(next)
   }, [])
@@ -119,17 +137,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return i < 0 ? DEFAULT_CATEGORIES.length : i
     }
     const categories = [...data.categories].sort((a, b) => rank(a.id) - rank(b.id) || a.name.localeCompare(b.name, 'fr'))
+    // Même principe pour les comptes : ceux d'origine d'abord, puis les comptes ajoutés, par nom.
+    const accountRank = (id: string) => {
+      const i = DEFAULT_ACCOUNTS.findIndex((a) => a.id === id)
+      return i < 0 ? DEFAULT_ACCOUNTS.length : i
+    }
+    const accounts = [...data.accounts].sort((a, b) => accountRank(a.id) - accountRank(b.id) || a.name.localeCompare(b.name, 'fr'))
+    const balances = accountBalances(data)
     return {
       ...data,
       categories,
+      accounts,
+      balances,
+      total: [...balances.values()].reduce((s, n) => s + n, 0),
+      alerts: budgetAlerts(data, currentMonth()),
       month,
       setMonth,
       save,
       remove,
       updateSettings,
       replaceAll,
-      clearAll: () =>
-        replaceAll({ transactions: [], budgets: [], goals: [], recurring: [], categories: DEFAULT_CATEGORIES, settings: data.settings }),
+      clearAll: () => replaceAll(emptyData(data.settings)),
       exportBackup: async () => {
         const ok = await download(`braz-sauvegarde-${todayISO()}.json`, JSON.stringify(toBackup(data), null, 2), 'application/json')
         if (ok) updateSettings({ lastBackupAt: Date.now(), backupSnoozeUntil: undefined })
@@ -139,14 +167,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const demo = demoData()
         // Les exemples s'appuient sur les catégories par défaut : on les rétablit si elles ont été supprimées.
         const ids = new Set(data.categories.map((c) => c.id))
-        const categories = [...data.categories, ...DEFAULT_CATEGORIES.filter((c) => !ids.has(c.id))]
-        return replaceAll({ ...demo, categories, settings: data.settings })
+        const cats = [...data.categories, ...DEFAULT_CATEGORIES.filter((c) => !ids.has(c.id))]
+        return replaceAll({ ...demo, categories: cats, settings: data.settings })
       },
+      changeCurrency: (currency, factor) =>
+        replaceAll(factor ? convertData(data, factor, currency) : { ...data, settings: { ...data.settings, currency } }),
       txForm,
       setTxForm,
+      transferForm,
+      setTransferForm,
       money: (n, sign) => formatMoney(n, data.settings.currency, sign),
     }
-  }, [data, month, txForm, save, remove, updateSettings, replaceAll])
+  }, [data, month, txForm, transferForm, save, remove, updateSettings, replaceAll])
 
   if (error && !value) {
     return (

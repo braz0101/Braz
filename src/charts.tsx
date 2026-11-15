@@ -53,8 +53,8 @@ export interface MonthPoint {
 
 /** Revenus et dépenses par mois ; un appui sélectionne le mois. */
 export function MonthBars({
-  data, selected, onSelect, describe,
-}: { data: MonthPoint[]; selected: string; onSelect: (m: string) => void; describe: (p: MonthPoint) => string }) {
+  data, selected, onSelect, describe, compact,
+}: { data: MonthPoint[]; selected: string; onSelect: (m: string) => void; describe: (p: MonthPoint) => string; compact?: boolean }) {
   const max = Math.max(1, ...data.flatMap((d) => [d.income, d.expense]))
   const bar = (value: number, color: string, on: boolean, i: number) => (
     <div
@@ -63,7 +63,7 @@ export function MonthBars({
     />
   )
   return (
-    <div className="flex h-48 items-stretch gap-1.5 sm:gap-3">
+    <div className={cx('flex h-48 items-stretch', compact ? 'gap-0.5 sm:gap-2' : 'gap-1.5 sm:gap-3')}>
       {data.map((d, i) => {
         const on = d.month === selected
         return (
@@ -75,12 +75,12 @@ export function MonthBars({
             onClick={() => onSelect(d.month)}
             className="flex min-w-0 flex-1 flex-col items-center gap-2 rounded-xl"
           >
-            <div className="flex min-h-0 w-full flex-1 items-end justify-center gap-1 border-b border-line">
-              {bar(d.income, '#3fbf98', on, i)}
-              {bar(d.expense, 'var(--ember)', on, i)}
+            <div className={cx('flex min-h-0 w-full flex-1 items-end justify-center border-b border-line', compact ? 'gap-px' : 'gap-1')}>
+              {bar(d.income, '#3fbf98', on || !selected, i)}
+              {bar(d.expense, 'var(--ember)', on || !selected, i)}
             </div>
-            <span className={cx('rounded-full px-2 py-0.5 text-xs font-semibold', on ? 'bg-ink text-white' : 'text-muted')}>
-              {monthShort(d.month)}
+            <span className={cx('rounded-full py-0.5 text-xs font-semibold', compact ? 'px-0' : 'px-2', on ? 'bg-ink text-white' : 'text-muted')}>
+              {compact ? monthShort(d.month).charAt(0).toUpperCase() : monthShort(d.month)}
             </span>
           </button>
         )

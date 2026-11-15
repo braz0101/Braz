@@ -1,11 +1,11 @@
 import { useState, type FormEvent } from 'react'
 import { ArrowLeft, Repeat } from 'lucide-react'
-import type { Budget, Category, Goal, Recurring, Transaction, TxType } from './types'
+import type { Budget, Category, Goal, Recurring, TxType } from './types'
 import { useStore } from './store'
-import { PALETTE, UNKNOWN_CATEGORY, amountToInput, parseAmount, shiftDay, todayISO, uid } from './lib'
+import { PALETTE, UNKNOWN_CATEGORY, amountToInput, parseAmount, todayISO, uid } from './lib'
 import { GOAL_ICONS, ICON_KEYS, iconFor } from './icons'
 import {
-  AmountInput, Button, ConfirmDelete, Field, IconChip, IconPicker, Segmented, Sheet, Swatches, Switch, cx, useClosing, useToast,
+  AmountInput, Button, ConfirmDelete, Field, IconChip, IconPicker, Segmented, Sheet, Swatches, cx, useClosing, useToast,
 } from './ui'
 
 const TYPE_OPTIONS: { value: TxType; label: string }[] = [
@@ -15,7 +15,7 @@ const TYPE_OPTIONS: { value: TxType; label: string }[] = [
 
 /* ---------- Choix de catégorie ---------- */
 
-function CategoryGrid({
+export function CategoryGrid({
   type, value, onChange, error,
 }: { type: TxType; value: string; onChange: (id: string) => void; error?: string }) {
   const { categories } = useStore()
@@ -46,155 +46,6 @@ function CategoryGrid({
       </div>
       {error && <p role="alert" className="mt-1.5 text-sm text-neg">{error}</p>}
     </fieldset>
-  )
-}
-
-/* ---------- Transaction ---------- */
-
-export function TransactionSheet({ tx, onClose: done }: { tx: Transaction | null; onClose: () => void }) {
-  const [closing, onClose] = useClosing(done)
-  const { categories, settings, save, remove } = useStore()
-  const toast = useToast()
-  const [type, setType] = useState<TxType>(tx?.type ?? 'expense')
-  const [amount, setAmount] = useState(tx ? amountToInput(tx.amount, settings.currency) : '')
-  const [categoryId, setCategoryId] = useState(tx?.categoryId ?? '')
-  const [date, setDate] = useState(tx?.date ?? todayISO())
-  const [note, setNote] = useState(tx?.note ?? '')
-  const [repeat, setRepeat] = useState(false)
-  const [errors, setErrors] = useState<{ amount?: string; category?: string }>({})
-
-  const today = todayISO()
-  const noun = type === 'expense' ? 'la dépense' : 'le revenu'
-
-  function submit(e: FormEvent) {
-    e.preventDefault()
-    const value = parseAmount(amount)
-    const next = {
-      amount: value ? undefined : 'Saisissez un montant.',
-      category: categories.some((c) => c.id === categoryId && c.type === type) ? undefined : 'Choisissez une catégorie.',
-    }
-    setErrors(next)
-    if (next.amount || next.category) return
-    const when = date || today
-    const recurringId = repeat ? uid() : tx?.recurringId
-    save('transactions', {
-      id: tx?.id ?? uid(),
-      type,
-      amount: value,
-      categoryId,
-      note: note.trim(),
-      date: when,
-      createdAt: tx?.createdAt ?? Date.now(),
-      ...(recurringId ? { recurringId } : {}),
-    })
-    if (repeat && recurringId) {
-      // Cette transaction compte pour son mois : la récurrence reprend le mois suivant.
-      const month = when.slice(0, 7)
-      save('recurring', {
-        id: recurringId, type, amount: value, categoryId, note: note.trim(), day: Number(when.slice(8)), startMonth: month, lastRun: month,
-      })
-    }
-    toast(tx ? 'Transaction modifiée' : type === 'expense' ? 'Dépense ajoutée' : 'Revenu ajouté')
-    onClose()
-  }
-
-  return (
-    <Sheet
-      closing={closing}
-      title={tx ? 'Modifier la transaction' : 'Nouvelle transaction'}
-      onClose={onClose}
-      footer={
-        <>
-          {tx && (
-            <ConfirmDelete
-              onConfirm={() => {
-                remove('transactions', tx.id)
-                toast('Transaction supprimée')
-                onClose()
-              }}
-            />
-          )}
-          <Button type="submit" form="tx-form" className="flex-1">
-            {tx ? 'Enregistrer' : `Ajouter ${noun}`}
-          </Button>
-        </>
-      }
-    >
-      <form id="tx-form" onSubmit={submit} className="space-y-5" noValidate>
-        <Segmented
-          label="Type de transaction"
-          options={TYPE_OPTIONS}
-          value={type}
-          onChange={(t) => {
-            setType(t)
-            setCategoryId('')
-            setErrors({})
-          }}
-        />
-        <AmountInput
-          value={amount}
-          autoFocus={!tx}
-          error={errors.amount}
-          onChange={(v) => {
-            setAmount(v)
-            if (errors.amount) setErrors((e) => ({ ...e, amount: undefined }))
-          }}
-        />
-
-        <CategoryGrid
-          type={type}
-          value={categoryId}
-          error={errors.category}
-          onChange={(id) => {
-            setCategoryId(id)
-            setErrors((e) => ({ ...e, category: undefined }))
-          }}
-        />
-
-        <div>
-          <div className="mb-1.5 flex items-center justify-between">
-            <label htmlFor="tx-date" className="text-sm font-medium text-muted">Date</label>
-            <div className="flex gap-1.5">
-              {[
-                { label: 'Aujourd’hui', value: today },
-                { label: 'Hier', value: shiftDay(today, -1) },
-              ].map((q) => (
-                <button
-                  key={q.label}
-                  type="button"
-                  onClick={() => setDate(q.value)}
-                  className={cx(
-                    'rounded-full px-3 py-1 text-xs font-semibold',
-                    date === q.value ? 'bg-primary-soft text-primary' : 'bg-surface-2 text-muted',
-                  )}
-                >
-                  {q.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <input id="tx-date" type="date" className="field" value={date} max={today} onChange={(e) => setDate(e.target.value)} />
-        </div>
-
-        <Field label="Note (facultatif)">
-          <input
-            className="field"
-            value={note}
-            maxLength={80}
-            enterKeyHint="done"
-            placeholder={type === 'expense' ? 'Ex. Déjeuner, taxi…' : 'Ex. Salaire de novembre'}
-            onChange={(e) => setNote(e.target.value)}
-          />
-        </Field>
-
-        {!tx && <Switch label="Répéter chaque mois" checked={repeat} onChange={setRepeat} />}
-        {tx?.recurringId && (
-          <p className="flex items-center gap-2 text-sm text-muted">
-            <Repeat size={15} /> Créée par une récurrence. La modifier ici ne change que ce mois.
-          </p>
-        )}
-      </form>
-    </Sheet>
   )
 }
 
@@ -405,7 +256,7 @@ export function BudgetSheet({ budget, onClose: done }: { budget: Budget | null; 
 
 export function GoalSheet({ goal, onClose: done }: { goal: Goal | null; onClose: () => void }) {
   const [closing, onClose] = useClosing(done)
-  const { settings, save, remove } = useStore()
+  const { settings, moves, save, remove } = useStore()
   const toast = useToast()
   const [name, setName] = useState(goal?.name ?? '')
   const [target, setTarget] = useState(goal ? amountToInput(goal.target, settings.currency) : '')
@@ -447,6 +298,8 @@ export function GoalSheet({ goal, onClose: done }: { goal: Goal | null; onClose:
           {goal && (
             <ConfirmDelete
               onConfirm={() => {
+                // L'argent de l'objectif revient sur les comptes d'où il venait.
+                moves.filter((m) => m.goalId === goal.id).forEach((m) => remove('moves', m.id))
                 remove('goals', goal.id)
                 toast('Objectif supprimé')
                 onClose()
@@ -493,56 +346,6 @@ export function GoalSheet({ goal, onClose: done }: { goal: Goal | null; onClose:
           <p className="mb-2 text-sm font-medium text-muted">Couleur</p>
           <Swatches colors={PALETTE} value={color} onChange={setColor} />
         </div>
-      </form>
-    </Sheet>
-  )
-}
-
-/** Verser de l'argent sur un objectif ou en retirer. */
-export function GoalMoveSheet({ goal, mode, onClose: done }: { goal: Goal; mode: 'deposit' | 'withdraw'; onClose: () => void }) {
-  const [closing, onClose] = useClosing(done)
-  const { save, money } = useStore()
-  const toast = useToast()
-  const [amount, setAmount] = useState('')
-  const [error, setError] = useState<string>()
-  const deposit = mode === 'deposit'
-
-  function submit(e: FormEvent) {
-    e.preventDefault()
-    const value = parseAmount(amount)
-    if (!value) return setError('Saisissez un montant.')
-    if (!deposit && value > goal.saved) return setError(`Vous pouvez retirer ${money(goal.saved)} au maximum.`)
-    save('goals', { ...goal, saved: goal.saved + (deposit ? value : -value) })
-    toast(deposit ? 'Versement enregistré' : 'Retrait enregistré')
-    onClose()
-  }
-
-  return (
-    <Sheet
-      closing={closing}
-      title={deposit ? `Verser · ${goal.name}` : `Retirer · ${goal.name}`}
-      onClose={onClose}
-      footer={
-        <Button type="submit" form="move-form" className="flex-1">
-          {deposit ? 'Verser' : 'Retirer'}
-        </Button>
-      }
-    >
-      <form id="move-form" onSubmit={submit} className="space-y-4" noValidate>
-        <AmountInput
-          value={amount}
-          autoFocus
-          error={error}
-          onChange={(v) => {
-            setAmount(v)
-            setError(undefined)
-          }}
-        />
-        <p className="text-sm text-muted">
-          {deposit
-            ? `Déduit du solde disponible. Reste ${money(Math.max(0, goal.target - goal.saved))} à épargner.`
-            : `Revient dans le solde disponible. Épargné : ${money(goal.saved)}.`}
-        </p>
       </form>
     </Sheet>
   )

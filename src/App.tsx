@@ -3,7 +3,7 @@ import { ChartNoAxesColumn, House, ArrowLeftRight, PiggyBank, Plus, Settings, Ta
 import { useStore } from './store'
 import { cx } from './ui'
 import { Logo } from './parts'
-import { TransactionSheet } from './forms'
+import { TransactionSheet, TransferSheet } from './sheets'
 import { Lock } from './lock'
 import { Home } from './pages/Home'
 import { Transactions } from './pages/Transactions'
@@ -41,7 +41,7 @@ function useRoute() {
 
 export function App() {
   const route = useRoute()
-  const { txForm, setTxForm, settings } = useStore()
+  const { txForm, setTxForm, transferForm, setTransferForm, settings, alerts } = useStore()
   const hasPin = !!settings.pin
   const [locked, setLocked] = useState(hasPin)
   const Page = route.page
@@ -100,7 +100,12 @@ export function App() {
                   i === ROUTES.length - 1 && 'mt-auto',
                 )}
               >
-                <r.icon size={20} strokeWidth={on ? 2.4 : 2} />
+                <span className="relative">
+                  <r.icon size={20} strokeWidth={on ? 2.4 : 2} />
+                  {r.path === 'budgets' && alerts.length > 0 && (
+                    <span className="absolute -right-1 -top-1 size-2.5 rounded-full bg-ember ring-2 ring-surface" aria-label="Budget à surveiller" />
+                  )}
+                </span>
                 <span className="hidden xl:inline">{r.full ?? r.label}</span>
               </a>
             )
@@ -144,6 +149,9 @@ export function App() {
                 <span className="relative grid h-7 w-12 place-items-center">
                   {on && <span className="pill-in absolute inset-0 rounded-full bg-primary-soft" />}
                   <r.icon size={20} strokeWidth={on ? 2.4 : 2} className="relative" />
+                  {r.path === 'budgets' && alerts.length > 0 && (
+                    <span className="absolute right-2 top-0 size-2.5 rounded-full bg-ember ring-2 ring-surface" aria-label="Budget à surveiller" />
+                  )}
                 </span>
                 <span className="max-w-full truncate text-[10px] font-semibold leading-none min-[360px]:text-[11px]">{r.label}</span>
               </a>
@@ -153,6 +161,7 @@ export function App() {
       </nav>
 
       {txForm && <TransactionSheet tx={txForm === 'new' ? null : txForm} onClose={() => setTxForm(null)} />}
+      {transferForm && <TransferSheet transfer={transferForm === 'new' ? null : transferForm} onClose={() => setTransferForm(null)} />}
     </div>
   )
 }

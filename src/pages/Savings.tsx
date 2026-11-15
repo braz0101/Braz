@@ -1,20 +1,23 @@
 import { useState } from 'react'
-import { CircleCheck, Pencil, PiggyBank, Plus } from 'lucide-react'
+import { CircleCheck, History, Pencil, PiggyBank, Plus } from 'lucide-react'
 import type { Goal } from '../types'
 import { useStore } from '../store'
 import { dateLabel } from '../lib'
 import { Button, Empty, IconChip, Money, Progress, stagger } from '../ui'
 import { PageHeader } from '../parts'
-import { GoalMoveSheet, GoalSheet } from '../forms'
+import { GoalSheet } from '../forms'
+import { GoalHistorySheet, GoalMoveSheet } from '../sheets'
 
 export function Savings() {
-  const { goals, money } = useStore()
+  const { goals, moves, money } = useStore()
   const [form, setForm] = useState<Goal | 'new' | null>(null)
   const [move, setMove] = useState<{ goal: Goal; mode: 'deposit' | 'withdraw' } | null>(null)
+  const [history, setHistory] = useState<Goal | null>(null)
 
   const sorted = [...goals].sort((a, b) => a.createdAt - b.createdAt)
   const saved = goals.reduce((s, g) => s + g.saved, 0)
   const target = goals.reduce((s, g) => s + g.target, 0)
+  const icon = 'grid size-11 shrink-0 place-items-center rounded-full text-muted transition hover:bg-surface-2 hover:text-ink active:scale-90'
 
   return (
     <>
@@ -40,6 +43,7 @@ export function Savings() {
           <div className="mt-6 grid gap-3 sm:grid-cols-2">
             {sorted.map((g, i) => {
               const done = g.saved >= g.target
+              const count = moves.filter((m) => m.goalId === g.id).length
               return (
                 <article key={g.id} className="card rise p-5" style={stagger(i + 1)}>
                   <div className="flex items-center gap-3">
@@ -58,12 +62,12 @@ export function Savings() {
                         )}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      aria-label={`Modifier l’objectif ${g.name}`}
-                      onClick={() => setForm(g)}
-                      className="grid size-11 shrink-0 place-items-center rounded-full text-muted transition hover:bg-surface-2 hover:text-ink active:scale-90"
-                    >
+                    {count > 0 && (
+                      <button type="button" aria-label={`Historique de ${g.name}`} onClick={() => setHistory(g)} className={icon}>
+                        <History size={18} />
+                      </button>
+                    )}
+                    <button type="button" aria-label={`Modifier l’objectif ${g.name}`} onClick={() => setForm(g)} className={`${icon} -ml-2`}>
                       <Pencil size={17} />
                     </button>
                   </div>
@@ -98,6 +102,7 @@ export function Savings() {
 
       {form && <GoalSheet goal={form === 'new' ? null : form} onClose={() => setForm(null)} />}
       {move && <GoalMoveSheet goal={move.goal} mode={move.mode} onClose={() => setMove(null)} />}
+      {history && <GoalHistorySheet goal={history} onClose={() => setHistory(null)} />}
     </>
   )
 }

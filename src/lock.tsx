@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Delete } from 'lucide-react'
+import { Delete, ScanFace } from 'lucide-react'
 import { useStore } from './store'
-import { DEFAULT_CATEGORIES, hashPin, uid } from './lib'
+import { emptyData, hashPin, uid } from './lib'
 import { Button, ConfirmDelete, Sheet, cx, useClosing, useToast } from './ui'
 import { Logo } from './parts'
 
@@ -31,6 +31,57 @@ function writeGuard(g: Guard | null) {
 /** Cinq essais libres, puis 30 s d'attente, doublée à chaque nouvelle erreur (15 min au plus). */
 const penalty = (fails: number) => (fails < FREE_ATTEMPTS ? 0 : Math.min(30_000 * 2 ** (fails - FREE_ATTEMPTS), 900_000))
 const waitLabel = (ms: number) => (ms >= 60_000 ? `${Math.ceil(ms / 60_000)} min` : `${Math.ceil(ms / 1000)} s`)
+
+/* ---------- Biométrie (Face ID, empreinte) ----------
+   La clé reste dans le téléphone. Sans serveur, on ne vérifie pas de signature : le simple fait que
+   l'appareil accepte de l'utiliser prouve que son propriétaire s'est authentifié. */
+
+const toB64 = (buf: ArrayBuffer) => btoa(String.fromCharCode(...new Uint8Array(buf)))
+const fromB64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0))
+const challenge = () => crypto.getRandomValues(new Uint8Array(32))
+
+export async function biometricAvailable(): Promise<boolean> {
+  try {
+    return !!window.PublicKeyCredential && (await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable())
+  } catch {
+    return false
+  }
+}
+
+/** Enregistre une clé sur l'appareil ; renvoie son identifiant, ou null si l'utilisateur annule. */
+export async function biometricRegister(): Promise<string | null> {
+  try {
+    const cred = (await navigator.credentials.create({
+      publicKey: {
+        challenge: challenge(),
+        rp: { name: 'BRAZ' },
+        user: { id: crypto.getRandomValues(new Uint8Array(16)), name: 'braz', displayName: 'BRAZ' },
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+        authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged' },
+        timeout: 60_000,
+      },
+    })) as PublicKeyCredential | null
+    return cred ? toB64(cred.rawId) : null
+  } catch {
+    return null
+  }
+}
+
+export async function biometricVerify(id: string): Promise<boolean> {
+  try {
+    const assertion = await navigator.credentials.get({
+      publicKey: {
+        challenge: challenge(),
+        allowCredentials: [{ type: 'public-key', id: fromB64(id), transports: ['internal'] }],
+        userVerification: 'required',
+        timeout: 60_000,
+      },
+    })
+    return !!assertion
+  } catch {
+    return false
+  }
+}
 
 /** Clavier à quatre chiffres. `onComplete` renvoie false si le code est refusé. */
 export function PinPad({
@@ -130,6 +181,15 @@ export function Lock({ onUnlock }: { onUnlock: () => void }) {
     setLeaving(true)
     setTimeout(onUnlock, 230)
   }
+  const biometricId = settings.biometricId
+  const useBiometric = () => {
+    if (biometricId) biometricVerify(biometricId).then((ok) => ok && open())
+  }
+  // Propose Face ID dès l'ouverture ; si le navigateur exige un geste, le bouton prend le relais.
+  useEffect(() => {
+    useBiometric()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <div
@@ -163,6 +223,15 @@ export function Lock({ onUnlock }: { onUnlock: () => void }) {
           }}
         />
       </div>
+      {biometricId && (
+        <button
+          type="button"
+          onClick={useBiometric}
+          className="inline-flex h-11 items-center gap-2 rounded-full bg-white/70 px-5 text-sm font-semibold text-primary transition active:scale-95"
+        >
+          <ScanFace size={18} /> Face ID ou empreinte
+        </button>
+      )}
       <button type="button" onClick={() => setForgot(true)} className="rounded-md text-sm font-semibold text-muted hover:text-ink">
         Code oublié ?
       </button>
@@ -177,14 +246,7 @@ export function Lock({ onUnlock }: { onUnlock: () => void }) {
               <ConfirmDelete
                 label="Tout effacer"
                 onConfirm={() =>
-                  replaceAll({
-                    transactions: [],
-                    budgets: [],
-                    goals: [],
-                    recurring: [],
-                    categories: DEFAULT_CATEGORIES,
-                    settings: { id: 'settings', currency: settings.currency },
-                  }).then(open)
+                  replaceAll(emptyData({ id: 'settings', currency: settings.currency })).then(open)
                 }
               />
             </>

@@ -1,15 +1,16 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
-  ChevronRight, Download, FileSpreadsheet, KeyRound, LockKeyhole, LockKeyholeOpen, Plus, Repeat, Sparkles, Trash2, Upload,
+  ChevronRight, Download, FileSpreadsheet, KeyRound, LockKeyhole, LockKeyholeOpen, Plus, Repeat, ScanFace, Sparkles, Trash2, Upload,
   type LucideIcon,
 } from 'lucide-react'
 import type { Category, Currency, Data } from '../types'
 import { useStore } from '../store'
 import { download, readBackup, toCSV, todayISO } from '../lib'
-import { Button, ConfirmDelete, Segmented, Sheet, stagger, useToast } from '../ui'
+import { Button, ConfirmDelete, Segmented, Sheet, Switch, stagger, useToast } from '../ui'
 import { PageHeader } from '../parts'
 import { CategorySheet, RecurringSheet } from '../forms'
-import { PinSetupSheet } from '../lock'
+import { CurrencySheet } from '../sheets'
+import { PinSetupSheet, biometricAvailable, biometricRegister } from '../lock'
 import { iconFor } from '../icons'
 
 const CURRENCIES: { value: Currency; label: string }[] = [
@@ -18,6 +19,7 @@ const CURRENCIES: { value: Currency; label: string }[] = [
   { value: 'EUR', label: 'Euro' },
   { value: 'USD', label: 'Dollar' },
 ]
+const isXOF = (c: Currency) => c === 'FCFA' || c === 'XOF'
 
 function Section({ title, index, children }: { title: string; index: number; children: ReactNode }) {
   return (
@@ -47,26 +49,44 @@ function Row({
 
 export function SettingsPage() {
   const store = useStore()
-  const { settings, categories, transactions, budgets, goals, recurring, updateSettings } = store
+  const { settings, categories, accounts, transactions, budgets, goals, recurring, transfers, updateSettings } = store
   const toast = useToast()
   const fileRef = useRef<HTMLInputElement>(null)
   const [catForm, setCatForm] = useState<Category | 'new' | null>(null)
   const [pinSetup, setPinSetup] = useState(false)
   const [recurringOpen, setRecurringOpen] = useState(false)
+  const [currencyTo, setCurrencyTo] = useState<Currency | null>(null)
   const [pending, setPending] = useState<Data | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const [wipe, setWipe] = useState(false)
+  const [biometric, setBiometric] = useState(false)
 
-  const empty = !transactions.length && !budgets.length && !goals.length && !recurring.length
+  useEffect(() => {
+    biometricAvailable().then(setBiometric)
+  }, [])
 
+  const empty = !transactions.length && !budgets.length && !goals.length && !recurring.length && !transfers.length
+  const hasAmounts = !empty || accounts.some((a) => a.initial)
+
+  function pickCurrency(to: Currency) {
+    if (to === settings.currency) return
+    // FCFA et XOF désignent la même monnaie ; sans montant enregistré, il n'y a rien à convertir.
+    if ((isXOF(to) && isXOF(settings.currency)) || !hasAmounts) store.changeCurrency(to)
+    else setCurrencyTo(to)
+  }
+  async function toggleBiometric(on: boolean) {
+    if (!on) return updateSettings({ biometricId: undefined })
+    const id = await biometricRegister()
+    if (id) {
+      updateSettings({ biometricId: id })
+      toast('Déverrouillage biométrique activé')
+    } else setProblem('L’activation a été annulée ou n’est pas possible sur cet appareil.')
+  }
   function exportJSON() {
     store.exportBackup().then((ok) => ok && toast('Sauvegarde exportée'))
   }
-  const lastBackup = settings.lastBackupAt
-    ? `Dernière le ${new Date(settings.lastBackupAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}`
-    : 'Aucune pour l’instant'
   function exportCSV() {
-    download(`braz-transactions-${todayISO()}.csv`, toCSV(transactions, categories), 'text/csv;charset=utf-8').then(
+    download(`braz-transactions-${todayISO()}.csv`, toCSV(transactions, categories, accounts), 'text/csv;charset=utf-8').then(
       (ok) => ok && toast('Transactions exportées'),
     )
   }
@@ -79,6 +99,9 @@ export function SettingsPage() {
     }
     if (fileRef.current) fileRef.current.value = ''
   }
+  const lastBackup = settings.lastBackupAt
+    ? `Dernière le ${new Date(settings.lastBackupAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}`
+    : 'Aucune pour l’instant'
 
   return (
     <>
@@ -86,7 +109,7 @@ export function SettingsPage() {
 
       <div className="max-w-2xl">
         <Section title="Devise" index={0}>
-          <Segmented label="Devise" options={CURRENCIES} value={settings.currency} onChange={(currency) => updateSettings({ currency })} />
+          <Segmented label="Devise" options={CURRENCIES} value={settings.currency} onChange={pickCurrency} />
         </Section>
 
         <Section title="Sécurité" index={1}>
@@ -98,7 +121,7 @@ export function SettingsPage() {
                   icon={LockKeyholeOpen}
                   title="Désactiver le code"
                   onClick={() => {
-                    updateSettings({ pin: undefined })
+                    updateSettings({ pin: undefined, biometricId: undefined })
                     toast('Code d’accès désactivé')
                   }}
                 />
@@ -107,6 +130,14 @@ export function SettingsPage() {
               <Row icon={LockKeyhole} title="Activer un code d’accès" text="4 chiffres, demandés à l’ouverture" onClick={() => setPinSetup(true)} />
             )}
           </div>
+          {settings.pin && biometric && (
+            <div className="mt-3 flex items-center gap-3">
+              <ScanFace size={22} className="ml-1 shrink-0 text-primary" />
+              <div className="min-w-0 flex-1">
+                <Switch label="Face ID ou empreinte" checked={!!settings.biometricId} onChange={toggleBiometric} />
+              </div>
+            </div>
+          )}
         </Section>
 
         <Section title="Récurrences" index={2}>
@@ -168,6 +199,7 @@ export function SettingsPage() {
       {catForm && <CategorySheet category={catForm === 'new' ? null : catForm} onClose={() => setCatForm(null)} />}
       {pinSetup && <PinSetupSheet onClose={() => setPinSetup(false)} />}
       {recurringOpen && <RecurringSheet onClose={() => setRecurringOpen(false)} />}
+      {currencyTo && <CurrencySheet to={currencyTo} onClose={() => setCurrencyTo(null)} />}
 
       {pending && (
         <Sheet
@@ -220,13 +252,13 @@ export function SettingsPage() {
           }
         >
           <p className="text-[15px] text-muted">
-            Transactions, budgets et objectifs seront supprimés de cet appareil. C’est définitif : exportez d’abord une sauvegarde.
+            Transactions, comptes, budgets et objectifs seront supprimés de cet appareil. C’est définitif : exportez d’abord une sauvegarde.
           </p>
         </Sheet>
       )}
 
       {problem && (
-        <Sheet title="Restauration impossible" onClose={() => setProblem(null)} footer={<Button className="flex-1" onClick={() => setProblem(null)}>Fermer</Button>}>
+        <Sheet title="Action impossible" onClose={() => setProblem(null)} footer={<Button className="flex-1" onClick={() => setProblem(null)}>Fermer</Button>}>
           <p className="text-[15px] text-muted">{problem}</p>
         </Sheet>
       )}

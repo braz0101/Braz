@@ -16,17 +16,19 @@
 
 | | |
 |---|---|
-| **Tableau de bord** | Solde disponible, revenus et dépenses du mois, courbe d'évolution, dernières transactions. |
-| **Transactions** | Ajout en quelques secondes, modification, suppression, recherche, filtres par type et par catégorie. |
+| **Tableau de bord** | Solde disponible tous comptes confondus, revenus et dépenses du mois, courbe d'évolution, dernières transactions. |
+| **Comptes** | Espèces, compte bancaire, mobile money ou tout autre compte, chacun avec son solde. Transferts d'un compte à l'autre. |
+| **Transactions** | Ajout en quelques secondes avec description et compte, modification, suppression. Recherche sur toute la période, filtres par type, compte et catégorie. |
 | **Récurrences** | Salaire, loyer, abonnements : cochez « Répéter chaque mois » et la transaction s'ajoute seule chaque mois. |
 | **Catégories** | Quinze catégories prêtes à l'emploi, personnalisables (nom, icône, couleur). |
-| **Budgets** | Une limite mensuelle par catégorie, avec le reste à dépenser et le montant disponible par jour. |
-| **Épargne** | Des objectifs avec versements, retraits et progression. L'argent mis de côté est déduit du solde disponible. |
-| **Statistiques** | Revenus et dépenses sur six mois, répartition par catégorie, taux d'épargne, moyenne par jour. |
-| **Code d'accès** | Verrouillage par code à 4 chiffres à l'ouverture de l'application. |
-| **Données** | Export et restauration d'une sauvegarde JSON, export CSV des transactions. |
+| **Budgets** | Une limite mensuelle par catégorie, avec le reste à dépenser. Alerte dans l'application quand un budget approche de sa limite ou la dépasse. |
+| **Épargne** | Des objectifs alimentés depuis vos comptes, avec l'historique des versements et des retraits. |
+| **Statistiques** | Vue par mois ou par année, comparaison avec la période précédente, répartition par catégorie, moyenne par jour. |
+| **Sécurité** | Code à 4 chiffres à l'ouverture, déverrouillage par Face ID ou empreinte sur les appareils compatibles. |
+| **Devises** | FCFA, XOF, euro, dollar. Changer de devise peut convertir tous les montants au taux de votre choix. |
+| **Données** | Export et restauration d'une sauvegarde JSON, export CSV des transactions, rappel de sauvegarde. |
 
-Devise FCFA par défaut (XOF, euro et dollar disponibles). Interface en français.
+Devise FCFA par défaut. Interface en français.
 
 ## Aperçu
 
@@ -82,8 +84,9 @@ src/
   db.ts          accès IndexedDB
   lib.ts         dates, montants, calculs, sauvegarde
   ui.tsx         composants de base (boutons, feuilles, champs, animations)
-  forms.tsx      formulaires (transaction, budget, objectif, catégorie)
-  lock.tsx       code d'accès
+  sheets.tsx     formulaires liés à l'argent (transaction, transfert, compte, épargne, devise)
+  forms.tsx      autres formulaires (budget, objectif, catégorie, récurrences)
+  lock.tsx       code d'accès et biométrie
   charts.tsx     graphiques SVG
   pages/         les six écrans
 ```

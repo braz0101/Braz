@@ -1,4 +1,4 @@
-import type { Backup, Category, Currency, Data, Goal, Recurring, Transaction, Budget } from './types'
+import type { Account, Backup, Category, Currency, Data, Goal, Recurring, Settings, Transaction, Budget } from './types'
 
 export const uid = () => crypto.randomUUID()
 
@@ -51,7 +51,7 @@ export const dateLabel = (iso: string) =>
 
 const SYMBOL: Record<Currency, string> = { FCFA: 'FCFA', XOF: 'XOF', EUR: '€', USD: '$' }
 export const currencySymbol = (c: Currency) => SYMBOL[c]
-const decimals = (c: Currency) => (c === 'FCFA' || c === 'XOF' ? 0 : 2)
+export const decimals = (c: Currency) => (c === 'FCFA' || c === 'XOF' ? 0 : 2)
 
 export function formatNumber(n: number, c: Currency): string {
   const dec = decimals(c)
@@ -116,6 +116,91 @@ export const DEFAULT_CATEGORIES: Category[] = [
 
 export const UNKNOWN_CATEGORY: Category = c('?', 'Sans catégorie', 'expense', 'more', '#7A7FA3')
 
+/* ---------- Comptes ---------- */
+
+export const DEFAULT_ACCOUNTS: Account[] = [
+  { id: 'especes', name: 'Espèces', icon: 'wallet', color: '#0E9F6E', initial: 0 },
+  { id: 'banque', name: 'Compte bancaire', icon: 'bank', color: '#4B4EE6', initial: 0 },
+  { id: 'mobile', name: 'Mobile money', icon: 'phone', color: '#FF5B2E', initial: 0 },
+]
+
+/** Solde de chaque compte : départ + revenus − dépenses ± transferts − argent placé en épargne. */
+export function accountBalances(d: Pick<Data, 'accounts' | 'transactions' | 'transfers' | 'moves'>): Map<string, number> {
+  const b = new Map(d.accounts.map((a) => [a.id, a.initial || 0]))
+  const add = (id: string | undefined, n: number) => {
+    if (id && b.has(id)) b.set(id, b.get(id)! + n)
+  }
+  for (const t of d.transactions) add(t.accountId, t.type === 'income' ? t.amount : -t.amount)
+  for (const t of d.transfers) {
+    add(t.fromId, -t.amount)
+    add(t.toId, t.amount)
+  }
+  for (const m of d.moves) add(m.accountId, -m.amount)
+  return b
+}
+
+export function emptyData(settings: Settings): Data {
+  return {
+    transactions: [], budgets: [], goals: [], recurring: [], transfers: [], moves: [],
+    categories: DEFAULT_CATEGORIES, accounts: DEFAULT_ACCOUNTS, settings,
+  }
+}
+
+/**
+ * Met des données anciennes ou importées au format courant : comptes par défaut,
+ * rattachement de chaque mouvement à un compte, historique d'épargne reconstitué.
+ */
+export function normalize(d: Data): Data {
+  const accounts = d.accounts.length ? d.accounts : DEFAULT_ACCOUNTS
+  const main = accounts[0].id
+  const ids = new Set(accounts.map((a) => a.id))
+  const fix = <T extends { accountId?: string }>(x: T): T => (x.accountId && ids.has(x.accountId) ? x : { ...x, accountId: main })
+  const withHistory = new Set(d.moves.map((m) => m.goalId))
+  const initialMoves = d.goals
+    .filter((g) => g.saved > 0 && !withHistory.has(g.id))
+    .map((g) => ({ id: `init-${g.id}`, goalId: g.id, accountId: main, amount: g.saved, date: toISO(new Date(g.createdAt)), createdAt: g.createdAt }))
+  return {
+    ...d,
+    accounts,
+    transactions: d.transactions.map(fix),
+    recurring: d.recurring.map(fix),
+    moves: [...d.moves.map(fix), ...initialMoves],
+  }
+}
+
+/** Convertit tous les montants dans une autre devise. */
+export function convertData(d: Data, factor: number, currency: Currency): Data {
+  const p = 10 ** decimals(currency)
+  const r = (n: number) => Math.round(n * factor * p) / p
+  const amount = <T extends { amount: number }>(x: T): T => ({ ...x, amount: r(x.amount) })
+  const moves = d.moves.map(amount)
+  return {
+    ...d,
+    transactions: d.transactions.map(amount),
+    recurring: d.recurring.map(amount),
+    transfers: d.transfers.map(amount),
+    moves,
+    budgets: d.budgets.map((b) => ({ ...b, limit: r(b.limit) })),
+    // Le total épargné est recalculé depuis l'historique pour rester exact après arrondi.
+    goals: d.goals.map((g) => ({
+      ...g,
+      target: r(g.target),
+      saved: Math.round(moves.reduce((s, m) => (m.goalId === g.id ? s + m.amount : s), 0) * p) / p,
+    })),
+    accounts: d.accounts.map((a) => ({ ...a, initial: r(a.initial) })),
+    settings: { ...d.settings, currency },
+  }
+}
+
+/** Budgets du mois proches de leur limite (85 % et plus) ou dépassés. */
+export function budgetAlerts(d: Pick<Data, 'budgets' | 'categories' | 'transactions'>, month: string) {
+  const spent = spentByCategory(inMonth(d.transactions, month))
+  return d.budgets
+    .map((b) => ({ id: b.id, name: d.categories.find((c) => c.id === b.categoryId)?.name ?? '', ratio: (spent.get(b.categoryId) ?? 0) / b.limit }))
+    .filter((a) => a.name && a.ratio >= 0.85)
+    .sort((a, b) => b.ratio - a.ratio)
+}
+
 /* ---------- Calculs ---------- */
 
 export const sum = (txs: Transaction[], type: Transaction['type']) =>
@@ -157,6 +242,7 @@ export function dueRecurring(recurring: Recurring[], today: string): { transacti
         date,
         createdAt: Date.now(),
         recurringId: r.id,
+        accountId: r.accountId,
       })
       last = month
       month = shiftMonth(month, 1)
@@ -238,70 +324,98 @@ export function readBackup(text: string): Data {
     budgets: Array.isArray(raw.budgets) ? raw.budgets : [],
     goals: Array.isArray(raw.goals) ? raw.goals : [],
     recurring: Array.isArray(raw.recurring) ? raw.recurring : [],
+    accounts: Array.isArray(raw.accounts) ? raw.accounts : [],
+    transfers: Array.isArray(raw.transfers) ? raw.transfers : [],
+    moves: Array.isArray(raw.moves) ? raw.moves : [],
     settings: { id: 'settings', currency: raw.settings?.currency ?? 'FCFA' },
   }
 }
 
-export function toCSV(txs: Transaction[], categories: Category[]): string {
+export function toCSV(txs: Transaction[], categories: Category[], accounts: Account[]): string {
   const cat = new Map(categories.map((x) => [x.id, x.name]))
+  const acc = new Map(accounts.map((x) => [x.id, x.name]))
   const esc = (s: string) => `"${s.replace(/"/g, '""')}"`
   const rows = sortTx(txs).map((t) =>
-    [t.date, t.type === 'income' ? 'Revenu' : 'Dépense', esc(cat.get(t.categoryId) ?? ''), String(t.amount).replace('.', ','), esc(t.note)].join(';'),
+    [t.date, t.type === 'income' ? 'Revenu' : 'Dépense', esc(cat.get(t.categoryId) ?? ''), esc(acc.get(t.accountId ?? '') ?? ''), String(t.amount).replace('.', ','), esc(t.note)].join(';'),
   )
-  return '﻿' + ['Date;Type;Catégorie;Montant;Note', ...rows].join('\r\n')
+  return '﻿' + ['Date;Type;Catégorie;Compte;Montant;Description', ...rows].join('\r\n')
 }
 
 /* ---------- Données d'exemple ---------- */
 
-export function demoData(): Pick<Data, 'transactions' | 'budgets' | 'goals' | 'recurring'> {
+export function demoData(): Pick<Data, 'transactions' | 'budgets' | 'goals' | 'recurring' | 'accounts' | 'transfers' | 'moves'> {
   let seed = 42
   const rnd = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646
   const between = (a: number, b: number, step = 500) => Math.round((a + rnd() * (b - a)) / step) * step
   const pick = <T,>(arr: T[]) => arr[Math.floor(rnd() * arr.length)]
+  const pocket = () => (rnd() < 0.65 ? 'especes' : 'mobile')
   const today = todayISO()
   const txs: Transaction[] = []
+  const transfers: Data['transfers'] = []
   let n = 0
-  const add = (date: string, type: Transaction['type'], categoryId: string, amount: number, note: string) => {
-    if (date <= today) txs.push({ id: uid(), type, categoryId, amount, note, date, createdAt: Date.now() - 1e6 + n++ })
+  const add = (date: string, type: Transaction['type'], categoryId: string, amount: number, note: string, accountId: string) => {
+    if (date <= today) txs.push({ id: uid(), type, categoryId, amount, note, date, accountId, createdAt: Date.now() - 1e6 + n++ })
   }
-  for (let back = 3; back >= 0; back--) {
-    const m = shiftMonth(currentMonth(), -back)
+  const move = (date: string, toId: string, amount: number, note: string) => {
+    if (date <= today) transfers.push({ id: uid(), fromId: 'banque', toId, amount, date, note, createdAt: Date.now() - 1e6 + n++ })
+  }
+  const months = [3, 2, 1, 0].map((back) => shiftMonth(currentMonth(), -back))
+  months.forEach((m, i) => {
+    const back = 3 - i
     const days = daysInMonth(m)
     const day = (d: number) => `${m}-${pad(Math.min(d, days))}`
-    add(day(1), 'income', 'salaire', 350000, 'Salaire')
-    if (back % 2 === 1) add(day(14), 'income', 'freelance', between(60000, 120000, 5000), 'Mission site web')
-    add(day(2), 'expense', 'logement', 90000, 'Loyer')
-    add(day(5), 'expense', 'factures', between(12000, 19000), 'Électricité')
-    add(day(6), 'expense', 'communication', 10000, 'Forfait internet')
-    add(day(9), 'expense', 'etudes', between(15000, 30000, 1000), pick(['Livres', 'Formation en ligne', 'Fournitures']))
+    add(day(1), 'income', 'salaire', 350000, 'Salaire', 'banque')
+    if (back % 2 === 1) add(day(14), 'income', 'freelance', between(60000, 120000, 5000), 'Mission site web', 'banque')
+    add(day(2), 'expense', 'logement', 90000, 'Loyer', 'banque')
+    move(day(3), 'especes', 120000, 'Retrait au guichet')
+    move(day(4), 'mobile', 60000, 'Recharge')
+    add(day(5), 'expense', 'factures', between(12000, 19000), 'Électricité', 'banque')
+    add(day(6), 'expense', 'communication', 10000, 'Forfait internet', 'mobile')
+    add(day(9), 'expense', 'etudes', between(15000, 30000, 1000), pick(['Livres', 'Formation en ligne', 'Fournitures']), 'banque')
     for (let d = 1; d <= days; d++) {
-      if (rnd() < 0.62) add(day(d), 'expense', 'alimentation', between(1500, 7500), pick(['Marché', 'Déjeuner', 'Supermarché', 'Boulangerie', 'Dîner']))
-      if (rnd() < 0.45) add(day(d), 'expense', 'transport', between(500, 3000), pick(['Taxi', 'Bus', 'Carburant', 'Moto-taxi']))
-      if (rnd() < 0.1) add(day(d), 'expense', 'loisirs', between(3000, 12000), pick(['Cinéma', 'Sortie entre amis', 'Concert', 'Jeux']))
-      if (rnd() < 0.05) add(day(d), 'expense', 'shopping', between(8000, 25000, 1000), pick(['Vêtements', 'Chaussures', 'Accessoires']))
-      if (rnd() < 0.035) add(day(d), 'expense', 'sante', between(3000, 15000), pick(['Pharmacie', 'Consultation']))
+      if (rnd() < 0.62) add(day(d), 'expense', 'alimentation', between(1500, 7500), pick(['Marché', 'Déjeuner', 'Supermarché', 'Boulangerie', 'Dîner']), pocket())
+      if (rnd() < 0.45) add(day(d), 'expense', 'transport', between(500, 3000), pick(['Taxi', 'Bus', 'Carburant', 'Moto-taxi']), pocket())
+      if (rnd() < 0.1) add(day(d), 'expense', 'loisirs', between(3000, 12000), pick(['Cinéma', 'Sortie entre amis', 'Concert', 'Jeux']), pocket())
+      if (rnd() < 0.05) add(day(d), 'expense', 'shopping', between(8000, 25000, 1000), pick(['Vêtements', 'Chaussures', 'Accessoires']), pocket())
+      if (rnd() < 0.035) add(day(d), 'expense', 'sante', between(3000, 15000), pick(['Pharmacie', 'Consultation']), pocket())
     }
-  }
+  })
   const budgets: Budget[] = [
     { id: uid(), categoryId: 'alimentation', limit: 90000 },
     { id: uid(), categoryId: 'transport', limit: 30000 },
     { id: uid(), categoryId: 'loisirs', limit: 25000 },
     { id: uid(), categoryId: 'shopping', limit: 30000 },
   ]
-  const goals: Goal[] = [
-    { id: uid(), name: 'Ordinateur portable', target: 450000, saved: 180000, icon: 'laptop', color: '#4B4EE6', createdAt: Date.now() - 2 },
-    { id: uid(), name: 'Fonds d’urgence', target: 300000, saved: 95000, icon: 'piggy', color: '#0E9F6E', createdAt: Date.now() - 1 },
+  // Objectifs alimentés par des versements réguliers depuis le compte bancaire
+  const plan = [
+    { name: 'Ordinateur portable', target: 450000, icon: 'laptop', color: '#4B4EE6', parts: [60000, 40000, 50000, 30000] },
+    { name: 'Fonds d’urgence', target: 300000, icon: 'piggy', color: '#0E9F6E', parts: [25000, 20000, 25000, 25000] },
   ]
+  const moves: Data['moves'] = []
+  const goals: Goal[] = plan.map((p, gi) => {
+    const id = uid()
+    months.forEach((m, i) => {
+      const date = `${m}-10`
+      if (date <= today) moves.push({ id: uid(), goalId: id, accountId: 'banque', amount: p.parts[i], date, createdAt: Date.now() - 1e6 + n++ })
+    })
+    const saved = moves.reduce((s, x) => (x.goalId === id ? s + x.amount : s), 0)
+    return { id, name: p.name, target: p.target, saved, icon: p.icon, color: p.color, createdAt: Date.now() - 2 + gi }
+  })
   // Les exemples mensuels ci-dessus existent déjà : la récurrence reprend au mois suivant.
-  const rec = (categoryId: string, type: Transaction['type'], amount: number, note: string, day: number): Recurring => {
+  const rec = (categoryId: string, type: Transaction['type'], amount: number, note: string, day: number, accountId: string): Recurring => {
     const month = currentMonth()
     const done = recurringDate(month, day) <= today
-    return { id: uid(), type, amount, categoryId, note, day, startMonth: month, lastRun: done ? month : shiftMonth(month, -1) }
+    return { id: uid(), type, amount, categoryId, note, day, accountId, startMonth: month, lastRun: done ? month : shiftMonth(month, -1) }
   }
   const recurring = [
-    rec('salaire', 'income', 350000, 'Salaire', 1),
-    rec('logement', 'expense', 90000, 'Loyer', 2),
-    rec('communication', 'expense', 10000, 'Forfait internet', 6),
+    rec('salaire', 'income', 350000, 'Salaire', 1, 'banque'),
+    rec('logement', 'expense', 90000, 'Loyer', 2, 'banque'),
+    rec('communication', 'expense', 10000, 'Forfait internet', 6, 'mobile'),
   ]
-  return { transactions: txs, budgets, goals, recurring }
+  const accounts: Account[] = [
+    { ...DEFAULT_ACCOUNTS[0], initial: 15000 },
+    { ...DEFAULT_ACCOUNTS[1], initial: 120000 },
+    { ...DEFAULT_ACCOUNTS[2], initial: 20000 },
+  ]
+  return { transactions: txs, budgets, goals, recurring, accounts, transfers, moves }
 }

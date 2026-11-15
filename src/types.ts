@@ -12,6 +12,8 @@ export interface Transaction {
   createdAt: number
   /** Renseigné quand la transaction provient d'une récurrence */
   recurringId?: string
+  /** Compte débité ou crédité */
+  accountId?: string
 }
 
 /** Transaction répétée chaque mois (salaire, loyer, abonnement…) */
@@ -27,6 +29,38 @@ export interface Recurring {
   startMonth: string
   /** Dernier mois pour lequel la transaction a été créée */
   lastRun?: string
+  accountId?: string
+}
+
+/** Endroit où se trouve l'argent : espèces, compte bancaire, mobile money… */
+export interface Account {
+  id: string
+  name: string
+  icon: string
+  color: string
+  /** Solde au moment de la création du compte */
+  initial: number
+}
+
+/** Déplacement d'argent entre deux comptes : ni un revenu, ni une dépense */
+export interface Transfer {
+  id: string
+  fromId: string
+  toId: string
+  amount: number
+  date: string
+  note: string
+  createdAt: number
+}
+
+/** Versement (montant positif) ou retrait (négatif) sur un objectif d'épargne */
+export interface SavingsMove {
+  id: string
+  goalId: string
+  accountId: string
+  amount: number
+  date: string
+  createdAt: number
 }
 
 export interface Category {
@@ -64,6 +98,10 @@ export interface Settings {
   lastBackupAt?: number
   /** Le rappel de sauvegarde est masqué jusqu'à cette date */
   backupSnoozeUntil?: number
+  /** Dernier compte utilisé, proposé par défaut */
+  lastAccountId?: string
+  /** Identifiant de la clé biométrique (Face ID, empreinte) enregistrée sur cet appareil */
+  biometricId?: string
 }
 
 export interface Data {
@@ -72,6 +110,9 @@ export interface Data {
   budgets: Budget[]
   goals: Goal[]
   recurring: Recurring[]
+  accounts: Account[]
+  transfers: Transfer[]
+  moves: SavingsMove[]
   settings: Settings
 }
 
